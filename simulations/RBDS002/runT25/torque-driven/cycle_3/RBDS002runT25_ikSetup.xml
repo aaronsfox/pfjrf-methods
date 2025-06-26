@@ -1,0 +1,149 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<OpenSimDocument Version="40500">
+	<InverseKinematicsTool>
+		<!--Name/path to the xml .osim file.-->
+		<model_file>..\..\..\scaling\RBDS002_scaledModelAdjusted.osim</model_file>
+		<!--The time range for the study.-->
+		<time_range>14.641 15.448</time_range>
+		<!--Name of the resulting inverse kinematics motion (.mot) file.-->
+		<output_motion_file>RBDS002runT25_ik.mot</output_motion_file>
+		<!--Markers and coordinates to be considered (tasks) and their weightings. The sum of weighted-squared task errors composes the cost function.-->
+		<IKTaskSet>
+			<objects>
+				<IKMarkerTask name="R.ASIS">
+					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
+					<weight>2.5</weight>
+				</IKMarkerTask>
+				<IKMarkerTask name="L.ASIS">
+					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
+					<weight>2.5</weight>
+				</IKMarkerTask>
+				<IKMarkerTask name="R.PSIS">
+					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
+					<weight>2.5</weight>
+				</IKMarkerTask>
+				<IKMarkerTask name="L.PSIS">
+					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
+					<weight>2.5</weight>
+				</IKMarkerTask>
+				<IKMarkerTask name="R.Iliac.Crest">
+					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
+					<weight>1</weight>
+				</IKMarkerTask>
+				<IKMarkerTask name="L.Iliac.Crest">
+					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
+					<weight>1</weight>
+				</IKMarkerTask>
+				<IKMarkerTask name="R.Thigh.Top.Lateral">
+					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
+					<weight>5</weight>
+				</IKMarkerTask>
+				<IKMarkerTask name="R.Thigh.Bottom.Lateral">
+					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
+					<weight>5</weight>
+				</IKMarkerTask>
+				<IKMarkerTask name="R.Thigh.Top.Medial">
+					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
+					<weight>5</weight>
+				</IKMarkerTask>
+				<IKMarkerTask name="R.Thigh.Bottom.Medial">
+					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
+					<weight>5</weight>
+				</IKMarkerTask>
+				<IKMarkerTask name="R.Shank.Top.Lateral">
+					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
+					<weight>5</weight>
+				</IKMarkerTask>
+				<IKMarkerTask name="R.Shank.Bottom.Lateral">
+					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
+					<weight>5</weight>
+				</IKMarkerTask>
+				<IKMarkerTask name="R.Shank.Top.Medial">
+					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
+					<weight>5</weight>
+				</IKMarkerTask>
+				<IKMarkerTask name="R.Shank.Bottom.Medial">
+					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
+					<weight>5</weight>
+				</IKMarkerTask>
+				<IKMarkerTask name="R.Heel.Top">
+					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
+					<weight>5</weight>
+				</IKMarkerTask>
+				<IKMarkerTask name="R.Heel.Bottom">
+					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
+					<weight>5</weight>
+				</IKMarkerTask>
+				<IKMarkerTask name="R.Heel.Lateral">
+					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
+					<weight>5</weight>
+				</IKMarkerTask>
+				<IKMarkerTask name="R.MT1">
+					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
+					<weight>10</weight>
+				</IKMarkerTask>
+				<IKMarkerTask name="R.MT5">
+					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
+					<weight>10</weight>
+				</IKMarkerTask>
+				<IKMarkerTask name="L.Thigh.Top.Lateral">
+					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
+					<weight>5</weight>
+				</IKMarkerTask>
+				<IKMarkerTask name="L.Thigh.Bottom.Lateral">
+					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
+					<weight>5</weight>
+				</IKMarkerTask>
+				<IKMarkerTask name="L.Thigh.Top.Medial">
+					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
+					<weight>5</weight>
+				</IKMarkerTask>
+				<IKMarkerTask name="L.Thigh.Bottom.Medial">
+					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
+					<weight>5</weight>
+				</IKMarkerTask>
+				<IKMarkerTask name="L.Shank.Top.Lateral">
+					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
+					<weight>5</weight>
+				</IKMarkerTask>
+				<IKMarkerTask name="L.Shank.Bottom.Lateral">
+					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
+					<weight>5</weight>
+				</IKMarkerTask>
+				<IKMarkerTask name="L.Shank.Top.Medial">
+					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
+					<weight>5</weight>
+				</IKMarkerTask>
+				<IKMarkerTask name="L.Shank.Bottom.Medial">
+					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
+					<weight>5</weight>
+				</IKMarkerTask>
+				<IKMarkerTask name="L.Heel.Top">
+					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
+					<weight>5</weight>
+				</IKMarkerTask>
+				<IKMarkerTask name="L.Heel.Bottom">
+					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
+					<weight>5</weight>
+				</IKMarkerTask>
+				<IKMarkerTask name="L.Heel.Lateral">
+					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
+					<weight>5</weight>
+				</IKMarkerTask>
+				<IKMarkerTask name="L.MT1">
+					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
+					<weight>10</weight>
+				</IKMarkerTask>
+				<IKMarkerTask name="L.MT5">
+					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
+					<weight>10</weight>
+				</IKMarkerTask>
+			</objects>
+			<groups />
+		</IKTaskSet>
+		<!--TRC file (.trc) containing the time history of observations of marker positions obtained during a motion capture experiment. Markers in this file that have a corresponding task and model marker are included.-->
+		<marker_file>RBDS002runT25.trc</marker_file>
+		<!--Flag indicating whether or not to report model marker locations. Note, model marker locations are expressed in Ground.-->
+		<report_marker_locations>true</report_marker_locations>
+	</InverseKinematicsTool>
+</OpenSimDocument>
