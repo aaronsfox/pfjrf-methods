@@ -22,7 +22,38 @@ import shutil
 import opensim as osim
 import numpy as np
 from scipy.signal import butter, filtfilt
+from scipy.interpolate import UnivariateSpline
+from scipy.ndimage import label, median_filter
 import matplotlib.pyplot as plt
+
+# =========================================================================
+# Set-up
+# =========================================================================
+
+# Plot settings
+# -------------------------------------------------------------------------
+
+# Set matplotlib parameters
+from matplotlib import rcParams
+import matplotlib
+matplotlib.use('TkAgg')
+plt.ion()
+
+# rcParams['font.family'] = 'sans-serif'
+rcParams['font.sans-serif'] = 'Arial'
+rcParams['font.weight'] = 'bold'
+rcParams['axes.labelsize'] = 12
+rcParams['axes.titlesize'] = 16
+rcParams['axes.linewidth'] = 1.5
+rcParams['axes.labelweight'] = 'bold'
+rcParams['axes.spines.right'] = False
+rcParams['axes.spines.top'] = False
+rcParams['legend.fontsize'] = 10
+rcParams['xtick.major.width'] = 1.5
+rcParams['ytick.major.width'] = 1.5
+rcParams['legend.framealpha'] = 0.0
+rcParams['savefig.dpi'] = 300
+rcParams['savefig.format'] = 'pdf'
 
 # =========================================================================
 # Extract necessary files
@@ -32,7 +63,7 @@ import matplotlib.pyplot as plt
 # Get file list of static trials
 allParticipants = [os.path.split(file)[-1].split('static.c3d')[0] for file in glob.glob(os.path.join('raw', '*static.c3d'))]
 
-# Get the desired sum-sample of participants (inc. and up to RBDS028)
+# Get the desired sub-sample of participants (inc. and up to RBDS028)
 participantList = []
 for participant in allParticipants:
     participantNo = int(''.join(ii for ii in participant if ii.isdigit()))
@@ -55,6 +86,9 @@ for participant in participantList:
     # Loop through file list and copy to directory
     for file in participantFiles:
         shutil.copy(file, os.path.join(participant, os.path.split(file)[-1]))
+
+# # Option to get participant list from existing directories
+# participantList = [d for d in os.listdir(os.getcwd()) if os.path.isdir(os.path.join(os.getcwd(), d))]
 
 # =========================================================================
 # Convert files to OpenSim format
@@ -130,7 +164,25 @@ for participant in participantList:
         b, a = butter(4, normCutoff, btype='low', analog=False)
 
         # Apply lowpass filter to marker data columns
+        # Firstly correct exactly zero values as this is where data is missing
         for iCol in range(nCols):
+            # Replace any zeros with nan's
+            markerData[:, iCol][markerData[:, iCol] == 0] = np.nan
+            # Check need to interpolate over these before filtering
+            if any(np.isnan(markerData[:, iCol])):
+                # Apply spline to fill gaps
+                mask = ~np.isnan(markerData[:, iCol])
+                # Create cubic smoothing spline (k=3)
+                # s controls smoothing: 0 = exact fit, larger = smoother
+                # Check for enough data points
+                if mask.sum() > 3:
+                    spline = UnivariateSpline(np.array(dynaMarkers.getIndependentColumn())[mask], markerData[:, iCol][mask],
+                                              k=3, s=2.0)
+                    # Apply spline to missing data
+                    splined_missing = spline(np.array(dynaMarkers.getIndependentColumn())[~mask])
+                    # Fill the missing marker data
+                    markerData[:, iCol][~mask] = splined_missing
+            # Filter marker data
             markerData[:, iCol] = filtfilt(b, a, markerData[:, iCol])
 
         # Replace table data with rows of filtered data
@@ -179,58 +231,57 @@ for participant in participantList:
         normCutoff = filtFreq / nyq
         b, a = butter(4, normCutoff, btype='low', analog=False)
 
-        # # Apply lowpass filter to marker data columns
-        # for iCol in range(dataArray.shape[1]):
-        #     dataArray[:, iCol] = filtfilt(b, a, dataArray[:, iCol])
-
         # Get the vertical force data out for allocating foot contacts
         # Use a filtered version of this to make identifying crossing easier
         forceInd = list(forcesFlat.getColumnLabels()).index('f1_2')
-        vForce = filtfilt(b,a,dataArray[:, forceInd])
+        vForce = dataArray[:, forceInd]
+        # vForce = filtfilt(b,a,dataArray[:, forceInd])
 
-        # Find where data is below 100N threshold being used for contact identification
-        # Higher force threshold seemed to help with noisy-ish COP data at foot contact
-        vertForceThreshold = 100
-        zeroDataLogical = vForce < vertForceThreshold
+        # Find where data is above vertical force threshold of 50N for at least 25 frames
+        vert_threshold = 50
+        consec_frames = 25
+        # Find where data is over threshold
+        above = vForce > vert_threshold
+        # Identify where above criteria meets frame length criteria
+        labeled_array, num_features = label(above)
+        contact_mask = np.zeros_like(vForce, dtype=bool)
+        for feature in range(1, num_features + 1):
+            indices = np.where(labeled_array == feature)[0]
+            if len(indices) >= consec_frames:
+                contact_mask[indices] = True
 
-        # # Zero all data where no contact is specified
-        # for ii in range(dataArray.shape[1]):
-        #     dataArray[zeroDataLogical,ii] = 0
+        # # Plot to check contact identification
+        # plt.plot(vForce)
+        # plt.plot(contact_mask*2000)
 
-        # Zero vertical force data below threshold
-        vForce[zeroDataLogical] = 0
+        # Set all force data to zero outside of contact periods
+        dataArray[~contact_mask,:] = 0
 
-        # Identify contact indices based on force threshold
-        thresholdCrossings = np.diff(vForce > vertForceThreshold, prepend=False)
-        thresholdInd = np.argwhere(thresholdCrossings)[:, 0]
-
-        # Sort into pairs
-        # If the first index is zero it means that the trial started on the plate and this needs to be accounted for
-        contactPairs = []
-        if thresholdInd[0] == 0:
-            for ii in range(0, len(thresholdInd[2::]), 2):
-                contactPairs.append(thresholdInd[2::][ii:ii + 2])
-        else:
-            for ii in range(0, len(thresholdInd), 2):
-                contactPairs.append(thresholdInd[ii:ii + 2])
-
-        # Trim last contact pair if only single contact (i.e. contact stayed on plate at end of trial
-        if len(contactPairs[-1]) == 1:
-            contactPairs = contactPairs[:-1]
+        # Identify contact pairs
+        diff = np.diff(contact_mask.astype(int))
+        rising_edge = np.where(diff == 1)[0] + 1
+        falling_edge = np.where(diff == -1)[0] + 1
+        # Handle mask starting or ending True
+        if contact_mask[0]:
+            rising_edge = np.insert(rising_edge, 0, 0)
+        if contact_mask[-1]:
+            falling_edge = np.append(falling_edge, len(contact_mask))
+        # Combine to contact pairs
+        contact_pairs = list(zip(rising_edge, falling_edge))
 
         # # Test visual of contact pairs
-        # plt.plot(vForce)
-        # plt.scatter([contactPairs[ii][0] for ii in range(len(contactPairs))],
-        #             np.zeros(len(contactPairs)), s = 5, marker = 'o', color = 'green')
-        # plt.scatter([contactPairs[ii][1] for ii in range(len(contactPairs))],
-        #             np.zeros(len(contactPairs)), s=5, marker='o', color='red')
+        # plt.plot(dataArray[:, forceInd])
+        # plt.scatter([contact_pairs[ii][0] for ii in range(len(contact_pairs))],
+        #             np.zeros(len(contact_pairs)), s = 5, marker = 'o', color = 'green')
+        # plt.scatter([contact_pairs[ii][1] for ii in range(len(contact_pairs))],
+        #             np.zeros(len(contact_pairs)), s=5, marker='o', color='red')
 
         # Create a new data array to store right and left contact forces
         # Note that right limb is first set of columns and left limb is second set of columns
         forcesData = np.zeros((forcesFlat.getNumRows(), forcesFlat.getNumColumns()*2))
 
         # Loop through pairs to figure out foot contact and allocate forces
-        for pair in contactPairs:
+        for pair in contact_pairs:
 
             # Get time at mid-point of force contact
             midContactTime = forcesFlat.getIndependentColumn()[int(pair[0]+(np.round((pair[1] - pair[0]) / 2)))]
@@ -250,12 +301,23 @@ for participant in participantList:
 
             # Extract the data into the appropriate columns for force array
             # Filter here across the contact period instead of the whole dataset
+            # Apply a median filter to centre of pressure data before filtering to fix noisy initial periods
             if contactLimb == 'right':
                 for ii in range(dataArray.shape[1]):
-                    forcesData[pair[0]:pair[1],ii] = filtfilt(b,a,dataArray[pair[0]:pair[1],ii])
+                    if forcesFlat.getColumnLabels()[ii].startswith('p'):
+                        forcesData[pair[0]:pair[1], ii] = filtfilt(
+                            b,a,median_filter(dataArray[pair[0]:pair[1],ii],size=10)
+                        )
+                    else:
+                        forcesData[pair[0]:pair[1],ii] = filtfilt(b,a,dataArray[pair[0]:pair[1],ii])
             elif contactLimb == 'left':
                 for ii in range(dataArray.shape[1]):
-                    forcesData[pair[0]:pair[1],ii+9] = filtfilt(b,a,dataArray[pair[0]:pair[1],ii])
+                    if forcesFlat.getColumnLabels()[ii].startswith('p'):
+                        forcesData[pair[0]:pair[1],ii+9] = filtfilt(
+                            b, a, median_filter(dataArray[pair[0]:pair[1], ii], size=10)
+                        )
+                    else:
+                        forcesData[pair[0]:pair[1],ii+9] = filtfilt(b,a,dataArray[pair[0]:pair[1],ii])
 
         # Build the new time series table
         forcesStorage = osim.Storage()
@@ -279,8 +341,8 @@ for participant in participantList:
         # Set labels in table
         newLabels = osim.ArrayStr()
         newLabels.append('time')
-        for label in forceLabels:
-            newLabels.append(label)
+        for label_f in forceLabels:
+            newLabels.append(label_f)
         forcesStorage.setColumnLabels(newLabels)
 
         # Add data

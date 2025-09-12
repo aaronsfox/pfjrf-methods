@@ -10,8 +10,9 @@ Any additional use must be in line with that described in the original paper.
 
 1. Download the .zip file from the link above or provided in the paper.
 2. Extract the archive and place the files in a folder named `raw` <u>**in the same folder as this README**</u>.
-3. Run the **`extractData.py`** script. This will take the necessary files out from the raw folder and sort them appropriately. It will also convert the `.c3d` files to necessary OpenSim formats (i.e. `.trc`, `.mot`, `.xml`).
-4. After running this script, the `raw` folder with the original files can be deleted.
+3. Run the **`extract_data.py`** script. This will take the necessary files out from the raw folder and sort them appropriately. It will also convert the `.c3d` files to necessary OpenSim formats (i.e. `.trc`, `.mot`, `.xml`).
+4. After running the **`extract_data.py`** script, the `raw` folder with the original files can be deleted.
+5. Run the **`process_data.py`** script. This will run through some initial processing steps — including model scaling, inverse kinematics and fitting polynomials to model muscle paths (if desired) — and generate the necessary inputs for the subsequent simulations.
 
 The above process results in separate folders for each participant from the dataset (i.e. RBDS*n* where *n* is the participant ID number). Within these folders are all of the extracted and create files relevant to that participant. Note that only a sub-sample (i.e. from RBDS001 through to RBDS028) of the original dataset are extracted for this work.
 
