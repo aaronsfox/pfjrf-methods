@@ -337,5 +337,5 @@ for participant in participantList:
     # Print confirmation
     print(f'Finished data extraction for {participant}...')
 
-# %% ---------- end of extractData.py ---------- %% #
+# %% ---------- end of extract_data.py ---------- %% #
 
