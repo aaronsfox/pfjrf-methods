@@ -8,8 +8,30 @@
     Deakin University
     aaron.f@deakin.edu.au
     
-    This script runs the muscle driven simulations of running task for calcuating
-    patellofemoral joint reaction forces.
+    This script runs the various torque and muscle driven simulations of
+    the running gait cycles for to generate the outputs for calculating
+    patellofemoral joint reaction forces with different modelling approaches.
+
+    TODO:
+        > Fix up argparser support so this can be run on HPC
+        > Simple model in dynamic optimisation has some weird results...
+            >> High muscle forces, negative plantarflexor muscle forces...
+            >> Is this due to damping/passive?
+                >> See: https://simtk.org/plugins/phpBB/viewtopicPhpbb.php?f=1815&t=11584&p=32430&start=0&view=
+        > Tendon dynamics included?
+            >> Need to test if works
+            >> Never works well with inverse...
+        > Sort out initial guess approach
+            >> Generic guess from good participant ta each speed?
+            >> Using a good initial guess even from a different speed seems like a good idea (e.g. RBDS03)
+            >> General initial guess from different participant actually had more iterations...
+                >> Does T25 from specific participant help?
+                    >> Doesn't make any real difference
+            >> Mesh refinement?
+                >> Doesn't make a huge difference in total objective function, but seems to speed up denser optimisations with smoother activations
+                >> Perhaps could use this to work up to a mesh interval of 50 with a bit more speed?
+                >> Use a good consistent general initial guess on all participants from a good MR strategy?
+                >> LOOKS LIKE GOOD OVERALL STRATEGY!
 
 """
 
@@ -23,34 +45,73 @@ import numpy as np
 import pandas as pd
 import shutil
 import matplotlib.pyplot as plt
-from matplotlib import rcParams
 import pickle
 import argparse
-import glob
 import random
+import re
+import time
 
 # =========================================================================
 # Flags for running analyses
 # =========================================================================
 
 # Set participant ID to run
-participant = 'RBDS002'
+participant = 'RBDS001'
+speed = 'T35'
 # parser = argparse.ArgumentParser()
 # parser.add_argument('-p', '--participant', action = 'store', type = str, help = 'Enter the participant ID')
+# parser.add_argument('-s', '--speed', action = 'store', type = str, help = 'Enter the speed label (T25, T35, T45)')
 # args = parser.parse_args()
 # participant = args.participant
 
 # Settings for running specific sections of code
-runScaling = True
 runTorqueSim = True
-runMuscleSim = True
-runSimulations = True
+runStaticOpt = True
+runDynamicOpt = True
 
 # =========================================================================
 # Set-up
 # =========================================================================
 
+# General settings
+# -------------------------------------------------------------------------
+
+# Read in participant info
+participantInfo = pd.read_csv(os.path.join('..','data','participantInfo.csv'))
+
+# Get participant list from folder
+participant_list = [ii for ii in os.listdir(
+    os.path.join('..', 'data')) if os.path.isdir(os.path.join(os.path.join('..', 'data', ii)))]
+
+# Check if input participant is in list
+if participant not in participant_list:
+    raise ValueError(f'No data found for participant ID {participant}. Check input for error...')
+
+# Set the list of speed conditions to process
+# Modify this if you want to include different running speeds
+speed_list = [
+    'T25',   # 2.5 m/s
+    'T35',   # 3.5 m/s
+    'T45',   # 4.5 m/s
+    ]
+
+# Check if input speed is in list
+if speed not in speed_list:
+    raise ValueError(f'Input speed of {speed} is not a valid option. Check input for error...')
+
+# Create the general folder for the participant and speed
+os.makedirs(os.path.join('..','simulations',participant,speed), exist_ok=True)
+
+# Plot settings
+# -------------------------------------------------------------------------
+
 # Set matplotlib parameters
+from matplotlib import rcParams
+import matplotlib
+matplotlib.use('TkAgg')
+plt.ion()
+
+# rcParams['font.family'] = 'sans-serif'
 rcParams['font.sans-serif'] = 'Arial'
 rcParams['font.weight'] = 'bold'
 rcParams['axes.labelsize'] = 12
@@ -66,330 +127,79 @@ rcParams['legend.framealpha'] = 0.0
 rcParams['savefig.dpi'] = 300
 rcParams['savefig.format'] = 'pdf'
 
+# OpenSim settings
+# -------------------------------------------------------------------------
+
 # Add the utility geometry path for model visualisation
 osim.ModelVisualizer.addDirToGeometrySearchPaths(os.path.join(os.getcwd(), '..', 'model', 'Geometry'))
-
-# Set the participant list based on those in dataset folder
-participantList = [ii for ii in os.listdir(os.path.join('..', 'data')) if
-                   os.path.isdir(os.path.join('..', 'data',ii))]
-
-# Check if input participant is in list
-if participant not in participantList:
-    raise ValueError(f'No data found for participant ID {participant}. Check input for error...')
 
 # Read in participant info
 participantInfo = pd.read_csv(os.path.join('..', 'data', 'participantInfo.csv'))
 
-# Set the list of speed conditions to process
-# Modify this if you want to isolate different running speeds
-speedList = [
-    'T25',   # 2.5 m/s
-    # 'T35',   # 3.5 m/s
-    'T45',   # 4.5 m/s
-    ]
-
 # Set weights for optimisations
 globalMarkerTrackingWeight = 1e1
-globalCoordinateTrackingWeight = 1e0
-globalTorqueControlEffortGoal = 1e-2
-globalMuscleControlEffortGoal = 1e-3
+globalTorqueControlWeight = 1e-3
+globalMuscleControlWeight = 1e-3
 
-# Set mesh interval
-# TODO: appropriate? setting interval time instead...?
-meshIntervalTorque = 100
-meshIntervalMuscle = 50
-meshIntervalStep = 0.002 * 2  # times by 2 to get this as the interval given transcription scheme
+# Set mesh interval for torque simulation
+meshIntervalTorque = 50
 
-# Set number of gait cycles to process from each speed condition
-nGaitCycles = 3  # TODO: 1 is probably more feasbile time-wise...? But potentially lacks accuracy...?
+# Set mesh refinement interval approach for dynamic optimisation
+meshIntervalMuscle = [5, 12, 25, 50]
 
 # Set kinematics filter frequency
-kinematicFiltFreq = 12
+# This matches marker data filter from associated paper
+kinematic_filt_freq = 10
 
 # =========================================================================
-# Scale model
+# Define functions
 # =========================================================================
 
-# Check for running scaling
-if runScaling:
+# Run torque driven marker tracking simulation
+# -------------------------------------------------------------------------
+def run_marker_tracking():
 
-    # Create measurement set for scaling
+    """
+
+    This function runs the torque driven marker tracking simulations, with the goal
+    here to generate a dynamically consistent motion for the set of gait cycles which
+    can be tracked with muscle-driven simulations. These simulations also generate the
+    knee angle and joint moment data required in the mechanical PFJRF model.
+
+    """
+
+    # =========================================================================
+    # Set-up files and parameters for simulation
+    # =========================================================================
+
+    # Files and settings
     # -------------------------------------------------------------------------
 
-    # Set the parameters for the measurement sets
-    measurementSetParams = {
-        # Pelvis
-        'pelvis_d': {'markerPairs': [['R.ASIS', 'R.PSIS'], ['L.ASIS', 'L.PSIS'], ], 'bodyScale': ['pelvis'], 'axes': 'X'},
-        'pelvis_h': {'markerPairs': [['R.ASIS', 'R.GTR'], ['L.ASIS', 'L.GTR'], ['R.PSIS', 'R.GTR'], ['L.PSIS', 'L.GTR'],
-                                     ['R.Iliac.Crest', 'R.GTR'], ['L.Iliac.Crest', 'L.GTR'], ], 'bodyScale': ['pelvis'], 'axes': 'Y'},
-        'pelvis_w': {'markerPairs': [['R.ASIS', 'L.ASIS'], ['R.PSIS', 'L.PSIS'], ], 'bodyScale': ['pelvis'], 'axes': 'Z'},
-        # Right thigh
-        'r_thigh_length': {'markerPairs': [['R.GTR', 'R.Knee'], ], 'bodyScale': ['femur_r'], 'axes': 'Y'},
-        'r_thigh_breadth': {'markerPairs': [['R.Knee', 'R.Knee.Medial'], ], 'bodyScale': ['femur_r'], 'axes': 'XZ'},
-        # Right patella
-        'r_patella': {'markerPairs': [['R.GTR', 'R.Knee'], ], 'bodyScale': ['patella_r'], 'axes': 'XYZ'},
-        # Right shank
-        'r_tibia_length': {'markerPairs': [['R.HF', 'R.Ankle'], ], 'bodyScale': ['tibia_r', 'talus_r'], 'axes': 'Y'},
-        'r_tibia_breadth': {'markerPairs': [['R.Ankle', 'R.Ankle.Medial'], ], 'bodyScale': ['tibia_r', 'talus_r'], 'axes': 'XZ'},
-        # Right foot
-        'r_heel': {'markerPairs': [['R.Ankle', 'R.Ankle.Medial'], ], 'bodyScale': ['calcn_r', 'toes_r'], 'axes': 'Z'},
-        'r_foot_length': {'markerPairs': [['R.Heel.Top', 'R.MT2'], ], 'bodyScale': ['calcn_r', 'toes_r'], 'axes': 'X'},
-        'r_foot_height': {'markerPairs': [['R.Heel.Top', 'R.Heel.Bottom'], ], 'bodyScale': ['calcn_r', 'toes_r'], 'axes': 'Y'},
-        # Left thigh
-        'l_thigh_length': {'markerPairs': [['L.GTR', 'L.Knee'], ], 'bodyScale': ['femur_l'], 'axes': 'Y'},
-        'l_thigh_breadth': {'markerPairs': [['L.Knee', 'L.Knee.Medial'], ], 'bodyScale': ['femur_l'], 'axes': 'XZ'},
-        # Left patella
-        'l_patella': {'markerPairs': [['L.GTR', 'L.Knee'], ], 'bodyScale': ['patella_l'], 'axes': 'XYZ'},
-        # Left shank
-        'l_tibia_length': {'markerPairs': [['L.HF', 'L.Ankle'], ], 'bodyScale': ['tibia_l', 'talus_l'], 'axes': 'Y'},
-        'l_tibia_breadth': {'markerPairs': [['L.Ankle', 'L.Ankle.Medial'], ], 'bodyScale': ['tibia_l', 'talus_l'], 'axes': 'XZ'},
-        # Left foot
-        'l_heel': {'markerPairs': [['L.Ankle', 'L.Ankle.Medial'], ], 'bodyScale': ['calcn_l', 'toes_l'], 'axes': 'Z'},
-        'l_foot_length': {'markerPairs': [['L.Heel.Top', 'L.MT2'], ], 'bodyScale': ['calcn_l', 'toes_l'], 'axes': 'X'},
-        'l_foot_height': {'markerPairs': [['L.Heel.Top', 'L.Heel.Bottom'], ], 'bodyScale': ['calcn_l', 'toes_l'], 'axes': 'Y'},
-    }
+    # Create the folder for simulation
+    os.makedirs(os.path.join('..','simulations',participant,speed,'marker_tracking'), exist_ok=True)
 
-    # Create the measurement set
-    scaleMeasurementSet = osim.MeasurementSet()
+    # Navigate to simulation folder for ease of use
+    home_dir = os.getcwd()
+    os.chdir(os.path.join('..', 'simulations', participant, speed, 'marker_tracking'))
 
-    # Append the measurements from parameters
-    for measureName in measurementSetParams.keys():
-        # Create the measurement
-        measurement = osim.Measurement()
-        measurement.setName(measureName)
-        # Append the marker pairs
-        for ii in range(len(measurementSetParams[measureName]['markerPairs'])):
-            measurement.getMarkerPairSet().cloneAndAppend(
-                osim.MarkerPair(measurementSetParams[measureName]['markerPairs'][ii][0],
-                                measurementSetParams[measureName]['markerPairs'][ii][1]))
-        # Append the body scales
-        for ii in range(len(measurementSetParams[measureName]['bodyScale'])):
-            # Create body scale
-            bodyScale = osim.BodyScale()
-            bodyScale.setName(measurementSetParams[measureName]['bodyScale'][ii])
-            # Create and set axis names
-            axes = osim.ArrayStr()
-            for jj in range(len(measurementSetParams[measureName]['axes'])):
-                axes.append(measurementSetParams[measureName]['axes'][jj])
-            bodyScale.setAxisNames(axes)
-            # Apppend to body scale set
-            measurement.getBodyScaleSet().cloneAndAppend(bodyScale)
-        # Append the measurement to the set
-        scaleMeasurementSet.cloneAndAppend(measurement)
+    # Copy external loads file to simulation directory
+    shutil.copyfile(
+        os.path.join('..', '..', '..', '..', 'data', participant, f'{participant}run{speed}_grf.mot'),
+        f'{participant}run{speed}_grf.mot')
+    shutil.copyfile(
+        os.path.join('..', '..', '..', '..', 'data', participant, f'{participant}run{speed}_grf.xml'),
+        f'{participant}run{speed}_grf.xml')
 
-    # Create scale task set
-    # -------------------------------------------------------------------------
-
-    # Set the parameters for the scale marker set
-    markerParams = {
-        # Pelvis
-        'R.ASIS': {'weight': 10.0}, 'L.ASIS': {'weight': 10.0}, 'R.PSIS': {'weight': 10.0}, 'L.PSIS': {'weight': 10.0},
-        'R.Iliac.Crest': {'weight': 0.0}, 'L.Iliac.Crest': {'weight': 0.0},
-        # Right thigh
-        'R.GTR': {'weight': 5.0},
-        'R.Thigh.Top.Lateral': {'weight': 0.0}, 'R.Thigh.Bottom.Lateral': {'weight': 0.0},
-        'R.Thigh.Top.Medial': {'weight': 0.0}, 'R.Thigh.Bottom.Medial': {'weight': 0.0},
-        'R.Knee': {'weight': 5.0}, 'R.Knee.Medial': {'weight': 5.0},
-        # Right shank
-        'R.HF': {'weight': 2.5}, 'R.TT': {'weight': 2.5},
-        'R.Shank.Top.Lateral': {'weight': 0.0}, 'R.Shank.Bottom.Lateral': {'weight': 0.0},
-        'R.Shank.Top.Medial': {'weight': 0.0}, 'R.Shank.Bottom.Medial': {'weight': 0.0},
-        'R.Ankle': {'weight': 10.0}, 'R.Ankle.Medial': {'weight': 10.0},
-        # Right foot
-        'R.Heel.Top': {'weight': 5.0}, 'R.Heel.Bottom': {'weight': 5.0}, 'R.Heel.Lateral': {'weight': 0.0},
-        'R.MT1': {'weight': 2.5}, 'R.MT2': {'weight': 2.5}, 'R.MT5': {'weight': 2.5},
-        # Left thigh
-        'L.GTR': {'weight': 5.0},
-        'L.Thigh.Top.Lateral': {'weight': 0.0}, 'L.Thigh.Bottom.Lateral': {'weight': 0.0},
-        'L.Thigh.Top.Medial': {'weight': 0.0}, 'L.Thigh.Bottom.Medial': {'weight': 0.0},
-        'L.Knee': {'weight': 5.0}, 'L.Knee.Medial': {'weight': 5.0},
-        # Left shank
-        'L.HF': {'weight': 2.5}, 'L.TT': {'weight': 2.5},
-        'L.Shank.Top.Lateral': {'weight': 0.0}, 'L.Shank.Bottom.Lateral': {'weight': 0.0},
-        'L.Shank.Top.Medial': {'weight': 0.0}, 'L.Shank.Bottom.Medial': {'weight': 0.0},
-        'L.Ankle': {'weight': 10.0}, 'L.Ankle.Medial': {'weight': 10.0},
-        # Left foot
-        'L.Heel.Top': {'weight': 5.0}, 'L.Heel.Bottom': {'weight': 5.0}, 'L.Heel.Lateral': {'weight': 0.0},
-        'L.MT1': {'weight': 2.5}, 'L.MT2': {'weight': 2.5}, 'L.MT5': {'weight': 2.5},
-    }
-
-    # Set the parameters for the scale joint set
-    jointParams = {'pelvis_tilt': 0.001, 'pelvis_list': 0.001, 'pelvis_rotation': 0.001,
-                   'hip_flexion_r': 0.001, 'hip_adduction_r': 0.001, 'hip_rotation_r': 0.001,
-                   'knee_angle_r': 0.001, 'ankle_angle_r': 0.001, 'subtalar_angle_r': 0.001,
-                   'hip_flexion_l': 0.001, 'hip_adduction_l': 0.001, 'hip_rotation_l': 0.001,
-                   'knee_angle_l': 0.001, 'ankle_angle_l': 0.001, 'subtalar_angle_l': 0.001,
-                   }
-
-    # Create the task set
-    scaleTaskSet = osim.IKTaskSet()
-
-    # Append the tasks from the marker parameters
-    for taskName in markerParams.keys():
-        # Create the task and add details
-        task = osim.IKMarkerTask()
-        task.setName(taskName)
-        task.setWeight(markerParams[taskName]['weight'])
-        if markerParams[taskName]['weight'] == 0.0:
-            task.setApply(False)
-        # Append to task set
-        scaleTaskSet.cloneAndAppend(task)
-
-    # Append the tasks from the joint parameters
-    for jointName in jointParams:
-        # Create the task and add details
-        jointTask = osim.IKCoordinateTask()
-        jointTask.setName(jointName)
-        jointTask.setWeight(jointParams[jointName])
-        # Append to task set
-        scaleTaskSet.cloneAndAppend(jointTask)
-
-    # Create folder location and set-up files for for scaling
-    # -------------------------------------------------------------------------
-
-    # Make participant directory and scaling folder
-    os.makedirs(os.path.join('..', 'simulations', participant), exist_ok=True)
-    os.makedirs(os.path.join('..', 'simulations', participant, 'scaling'), exist_ok=True)
-
-    # Copy the static TRC file to scaling directory
-    shutil.copyfile(os.path.join('..', 'data', participant, participant+'static.trc'),
-                    os.path.join('..', 'simulations', participant, 'scaling', participant+'static.trc'))
-
-    # Set-up and run scaling tool
-    # -------------------------------------------------------------------------
-
-    # Create scaling tool
-    scaleTool = osim.ScaleTool()
-
-    # Get and set participant mass in tool by locating static trial row
-    massKg = participantInfo.loc[participantInfo['FileName'] == participant+'static.c3d',]['Mass'].values[0]
-    scaleTool.setSubjectMass(massKg)
-
-    # Set generic model file
-    scaleTool.getGenericModelMaker().setModelFileName(os.path.join('..', 'model', 'Uhlrich2022_LowerLimb_Fukuchi2017.osim'))
-
-    # Set measurement set in model scaler
-    scaleTool.getModelScaler().setMeasurementSet(scaleMeasurementSet)
-
-    # Set scale tasks in tool
-    for ii in range(scaleTaskSet.getSize()):
-        scaleTool.getMarkerPlacer().getIKTaskSet().cloneAndAppend(scaleTaskSet.get(ii))
-
-    # Set marker file
-    scaleTool.getMarkerPlacer().setMarkerFileName(os.path.join('..', 'simulations', participant, 'scaling', participant+'static.trc'))
-    scaleTool.getModelScaler().setMarkerFileName(os.path.join('..', 'simulations', participant, 'scaling', participant+'static.trc'))
-
-    # Set options
-    scaleTool.getModelScaler().setPreserveMassDist(True)
-    scaleOrder = osim.ArrayStr()
-    scaleOrder.set(0, 'measurements')
-    scaleTool.getModelScaler().setScalingOrder(scaleOrder)
-
-    # Set time ranges
-    initialTime = osim.TimeSeriesTableVec3(os.path.join('..', 'simulations', participant, 'scaling',
-                                                        participant + 'static.trc')).getIndependentColumn()[0]
-    finalTime = osim.TimeSeriesTableVec3(os.path.join('..', 'simulations', participant, 'scaling',
-                                                      participant + 'static.trc')).getIndependentColumn()[-1]
-    timeRange = osim.ArrayDouble()
-    timeRange.set(0, initialTime)
-    timeRange.set(1, finalTime)
-    scaleTool.getMarkerPlacer().setTimeRange(timeRange)
-    scaleTool.getModelScaler().setTimeRange(timeRange)
-
-    # Set output files
-    scaleTool.getModelScaler().setOutputModelFileName(
-        os.path.join('..', 'simulations', participant, 'scaling', f'{participant}_scaledModel.osim'))
-    scaleTool.getModelScaler().setOutputScaleFileName(
-        os.path.join('..', 'simulations', participant, 'scaling', f'{participant}_scaleSet.xml'))
-
-    # Set marker adjustment parameters
-    scaleTool.getMarkerPlacer().setOutputMotionFileName(
-        os.path.join('..', 'simulations', participant, 'scaling', f'{participant}_staticMotion.mot'))
-    scaleTool.getMarkerPlacer().setOutputModelFileName(
-        os.path.join('..', 'simulations', participant, 'scaling', f'{participant}_scaledModelAdjusted.osim'))
-
-    # Save and run scale tool
-    scaleTool.printToXML(os.path.join('..', 'simulations', participant, 'scaling', f'{participant}_scaleSetup.xml'))
-    scaleTool.run()
-
-    # Adjust model
-    # -------------------------------------------------------------------------
-
-    # Load the model
-    scaledModel = osim.Model(os.path.join('..', 'simulations', participant, 'scaling', f'{participant}_scaledModelAdjusted.osim'))
-
-    # Set model name
-    scaledModel.setName(participant)
-
-    # Scale model muscle forces according to height-mass relationship
-
-    # Get generic model mass and set generic height
-    genModel = osim.Model(os.path.join('..', 'model', 'Uhlrich2022_LowerLimb_Fukuchi2017.osim'))
-    genModelMass = np.sum([genModel.getBodySet().get(bodyInd).getMass() for bodyInd in range(genModel.getBodySet().getSize())])
-    genModelHeight = 1.70
-
-    # Get scaled model height (use mass from earlier)
-    heightM = participantInfo.loc[participantInfo['FileName'] == participant + 'static.c3d',]['Height'].values[0] / 100
-
-    # Get muscle volume totals based on mass and heights with linear equation
-    genericMuscVol = 47.05 * genModelMass * genModelHeight + 1289.6
-    scaledMuscVol = 47.05 * massKg * heightM + 1289.6
-
-    # Loop through all muscles and scale according to volume and muscle parameters
-    # Use this opportunity to also update contraction velocity
-    for muscInd in range(scaledModel.getMuscles().getSize()):
-        # Get current muscle name
-        muscName = scaledModel.getMuscles().get(muscInd).getName()
-        # Get optimal fibre length for muscle from each model
-        genericL0 = genModel.getMuscles().get(muscName).getOptimalFiberLength()
-        scaledL0 = scaledModel.getMuscles().get(muscName).getOptimalFiberLength()
-        # Set force scale factor
-        forceScaleFactor = (scaledMuscVol / genericMuscVol) / (scaledL0 / genericL0)
-        # Scale current muscle strength
-        scaledModel.getMuscles().get(muscInd).setMaxIsometricForce(
-            forceScaleFactor * scaledModel.getMuscles().get(muscInd).getMaxIsometricForce())
-        # Update max contraction velocity
-        scaledModel.getMuscles().get(muscInd).setMaxContractionVelocity(30.0)
-
-    # Finalise model connections
-    scaledModel.finalizeConnections()
-
-    # Print to file (overwrites original adjusted model)
-    scaledModel.printToXML(os.path.join('..', 'simulations', participant, 'scaling', f'{participant}_scaledModelAdjusted.osim'))
-
-# =========================================================================
-# Run torque driven marker tracking simulations
-# =========================================================================
-
-"""
-
-This section runs the torque driven marker tracking simulations, with the goal
-here to generate a dynamically consistent motion for the set of gait cycles which
-can be tracked with muscle-driven simulations. These simulations also generate the
-knee angle and moment data required in the simplified PFJRF model.
-
-"""
-
-# Check for running simulations
-if runTorqueSim:
-
-    # Identify trials for running simulations
-    # -------------------------------------------------------------------------
-
-    # Look up the running trial names that match the speed condition list
-    trialList = []
-    for speed in speedList:
-        if os.path.exists(os.path.join('..', 'data', participant, f'{participant}run{speed}.c3d')):
-            trialList.append(os.path.join('..', 'data', participant, f'{participant}run{speed}'))
-
-    # Set general parameters for simulations
-    # -------------------------------------------------------------------------
+    # Copy marker file to simulation directory
+    shutil.copyfile(
+        os.path.join('..', '..', '..', '..', 'data', participant, f'{participant}run{speed}.trc'),
+        f'{participant}run{speed}.trc')
 
     # Set marker tracking weights
-    markerWeightParams = {
+    marker_weights = {
         # Pelvis
-        'R.ASIS': {'weight': 2.5}, 'L.ASIS': {'weight': 2.5}, 'R.PSIS': {'weight': 2.5}, 'L.PSIS': {'weight': 2.5},
-        'R.Iliac.Crest': {'weight': 1.0}, 'L.Iliac.Crest': {'weight': 1.0},
+        'R.ASIS': {'weight': 5.0}, 'L.ASIS': {'weight': 5.0}, 'R.PSIS': {'weight': 5.0}, 'L.PSIS': {'weight': 5.0},
+        'R.Iliac.Crest': {'weight': 2.5}, 'L.Iliac.Crest': {'weight': 2.5},
         # Right thigh
         'R.GTR': {'weight': 0.0},
         'R.Thigh.Top.Lateral': {'weight': 5.0}, 'R.Thigh.Bottom.Lateral': {'weight': 5.0},
@@ -418,1372 +228,815 @@ if runTorqueSim:
         'L.MT1': {'weight': 10.0}, 'L.MT2': {'weight': 0.0}, 'L.MT5': {'weight': 10.0},
     }
 
-    # Set actuator forces to drive simulations
-    actForces = {'pelvis_tx': {'actuatorType': 'residual', 'optForce': 5},
-                 'pelvis_ty': {'actuatorType': 'residual', 'optForce': 5},
-                 'pelvis_tz': {'actuatorType': 'residual', 'optForce': 5},
-                 'pelvis_tilt': {'actuatorType': 'residual', 'optForce': 2.5},
-                 'pelvis_list': {'actuatorType': 'residual', 'optForce': 2.5},
-                 'pelvis_rotation': {'actuatorType': 'residual', 'optForce': 2.5},
-                 'hip_flexion_r': {'actuatorType': 'torque', 'optForce': 300.0},
-                 'hip_adduction_r': {'actuatorType': 'torque', 'optForce': 200.0},
-                 'hip_rotation_r': {'actuatorType': 'torque', 'optForce': 100.0},
-                 'knee_angle_r': {'actuatorType': 'torque', 'optForce': 300.0},
-                 'ankle_angle_r': {'actuatorType': 'torque', 'optForce': 200.0},
-                 'subtalar_angle_r': {'actuatorType': 'torque', 'optForce': 100.0},
-                 'hip_flexion_l': {'actuatorType': 'torque', 'optForce': 300.0},
-                 'hip_adduction_l': {'actuatorType': 'torque', 'optForce': 200.0},
-                 'hip_rotation_l': {'actuatorType': 'torque', 'optForce': 100.0},
-                 'knee_angle_l': {'actuatorType': 'torque', 'optForce': 300.0},
-                 'ankle_angle_l': {'actuatorType': 'torque', 'optForce': 200.0},
-                 'subtalar_angle_l': {'actuatorType': 'torque', 'optForce': 100.0},
-                 }
+    # Set actuator forces to drive simulation
+    act_forces = {'pelvis_tx': {'actuatorType': 'residual', 'optForce': 5},
+                  'pelvis_ty': {'actuatorType': 'residual', 'optForce': 5},
+                  'pelvis_tz': {'actuatorType': 'residual', 'optForce': 5},
+                  'pelvis_tilt': {'actuatorType': 'residual', 'optForce': 2.5},
+                  'pelvis_list': {'actuatorType': 'residual', 'optForce': 2.5},
+                  'pelvis_rotation': {'actuatorType': 'residual', 'optForce': 2.5},
+                  'hip_flexion_r': {'actuatorType': 'torque', 'optForce': 300.0},
+                  'hip_adduction_r': {'actuatorType': 'torque', 'optForce': 200.0},
+                  'hip_rotation_r': {'actuatorType': 'torque', 'optForce': 100.0},
+                  'knee_angle_r': {'actuatorType': 'torque', 'optForce': 300.0},
+                  'ankle_angle_r': {'actuatorType': 'torque', 'optForce': 200.0},
+                  'hip_flexion_l': {'actuatorType': 'torque', 'optForce': 300.0},
+                  'hip_adduction_l': {'actuatorType': 'torque', 'optForce': 200.0},
+                  'hip_rotation_l': {'actuatorType': 'torque', 'optForce': 100.0},
+                  'knee_angle_l': {'actuatorType': 'torque', 'optForce': 300.0},
+                  'ankle_angle_l': {'actuatorType': 'torque', 'optForce': 200.0},
+                  }
 
-    # Simulate gait cycles from selected trials
+    # Select the stance phase to run the simulation for
     # -------------------------------------------------------------------------
 
-    # Loop through trials
-    for trial in trialList:
+    # Replicate the 10 gat cycles selected for inverse kinematics
+    # Read in GRF data to identify stance phase timings
+    trial_grf = osim.TimeSeriesTable(f'{participant}run{speed}_grf.mot')
+    vgrf = trial_grf.getDependentColumn('ground_force_r_vy').to_numpy()
+    grf_time = np.array(trial_grf.getIndependentColumn())
+    # Identify right foot contacts and toe offs based on rising and falling edges above threshold of 20N
+    force_above = vgrf > 20
+    rising_edges = np.where((~force_above[:-1]) & (force_above[1:]))[0] + 1
+    falling_edges = np.where((force_above[:-1]) & (~force_above[1:]))[0] + 1
 
-        # Get generic trial name
-        trialName = os.path.split(trial)[-1].replace(participant,'')
+    # # Stance phase option
+    # # Take the mid-point of the indices and take 5 strides either side
+    # # Get the associated times to run IK over
+    # middle_ind = np.where(rising_edges == rising_edges[len(rising_edges) // 2])[0][0]
+    # start_val = rising_edges[middle_ind - 5]
+    # end_val = rising_edges[middle_ind + 5]
+    # select_from = list(rising_edges[middle_ind - 5:middle_ind+4])
 
-        # Set-up folders and gait timings for trial
-        # -------------------------------------------------------------------------
+    # Toe-off to toe-off option
+    # Take the mid-point of the indices and take 5 strides either side
+    # Get the associated times to run IK over
+    middle_ind = np.where(falling_edges == falling_edges[len(rising_edges) // 2])[0][0]
+    start_val = falling_edges[middle_ind - 5]
+    end_val = falling_edges[middle_ind + 5]
+    select_from = list(falling_edges[middle_ind - 5:middle_ind + 4])
 
-        # Create the folder for storing trial data
-        os.makedirs(os.path.join('..', 'simulations', participant, trialName), exist_ok=True)
-        os.makedirs(os.path.join('..', 'simulations', participant, trialName, 'torque-driven'), exist_ok=True)
+    # Randomly sample the starting point from the identified foot strikes
+    # Set a seed based on participant ID number for consistency
+    random.seed(int(re.search(r"\d+", participant).group()) * 5 + 12345)
 
-        # Create the sub-folders for the gait cycles to be simulated
-        for ii in range(nGaitCycles):
-            os.makedirs(os.path.join('..', 'simulations', participant, trialName, 'torque-driven', f'cycle_{ii+1}'), exist_ok=True)
+    # # Stance phase option
+    # select_start = random.sample(select_from, 1)[0]
+    # # Find the end of the stance phase based on the force data
+    # below = np.where(vgrf[select_start:] < 20)[0]
+    # select_end = select_start + below[0]
 
-        # Read in GRF data to identify stance phase timings
-        trialGRF = osim.TimeSeriesTable(os.path.join('..', 'data', participant, f'{participant}{trialName}_grf.mot'))
+    # Toe-off to toe-off option
+    select_start = random.sample(select_from[:-1], 1)[0]
+    select_end = select_from[select_from.index(select_start)+1]
 
-        # Get vertical ground reaction force for right limb
-        vGRF = trialGRF.getDependentColumn('ground_force_r_vy').to_numpy()
+    # Set the start and end times based on grf data
+    start_time = grf_time[select_start]
+    end_time = grf_time[select_end]
 
-        # Identify contact indices based on force threshold
-        vertForceThreshold = 50
-        thresholdCrossings = np.diff(vGRF > vertForceThreshold, prepend=False)
-        thresholdInd = np.argwhere(thresholdCrossings)[:, 0]
+    # =========================================================================
+    # Set-up and run the tracking simulation
+    # =========================================================================
 
-        # Sort into pairs
-        # If the first index is zero it means that the trial started on the plate and this needs to be accounted for
-        contactPairs = []
-        if thresholdInd[0] == 0:
-            for ii in range(0, len(thresholdInd[2::]), 2):
-                contactPairs.append(thresholdInd[2::][ii:ii + 2])
+    # Set-up the model for the tracking simulation
+    # -------------------------------------------------------------------------
+
+    # Construct a model processor to use with the tool
+    model_proc = osim.ModelProcessor(os.path.join('..', '..', '..', '..', 'data', participant, 'scaling',
+                                                  f'{participant}_complex.osim'))
+
+    # Append external loads
+    model_proc.append(osim.ModOpAddExternalLoads(f'{participant}run{speed}_grf.xml'))
+
+    # Remove muscles from model
+    model_proc.append(osim.ModOpRemoveMuscles())
+
+    # Process model for further edits
+    track_model = model_proc.process()
+
+    # Add coordinate actuators to model
+    for coordinate in act_forces:
+        # Create actuator
+        actu = osim.CoordinateActuator()
+        # Set name
+        actu.setName(f'{coordinate}_{act_forces[coordinate]["actuatorType"]}')
+        # Set coordinate
+        actu.setCoordinate(track_model.updCoordinateSet().get(coordinate))
+        # Set optimal force
+        actu.setOptimalForce(act_forces[coordinate]['optForce'])
+        # Set min and max control
+        actu.setMinControl(np.inf * -1)
+        actu.setMaxControl(np.inf * 1)
+        # Append to model force set
+        track_model.updForceSet().cloneAndAppend(actu)
+
+    # Finalise model connections
+    track_model.finalizeConnections()
+    track_model.initSystem()
+
+    # Print model to file in tracking directory
+    track_model.printToXML(f'{participant}run{speed}_marker_tracking_complex.osim')
+
+    # Clean up kinematic data for tracking guess
+    # -------------------------------------------------------------------------
+
+    # Load in kinematic data to table processor
+    ik_proc = osim.TableProcessor(os.path.join('..', '..', '..', '..', 'data', participant, 'ik', speed,
+                                               f'{participant}_{speed}_ik_complex.mot'))
+
+    # Append operators to filter data, derive speeds, convert to radians and use full state names
+    ik_proc.append(osim.TabOpLowPassFilter(kinematic_filt_freq))
+    ik_proc.append(osim.TabOpConvertDegreesToRadians())
+    ik_proc.append(osim.TabOpUseAbsoluteStateNames())
+    ik_proc.append(osim.TabOpAppendCoordinateValueDerivativesAsSpeeds())
+
+    # Process table to get data
+    ik_data = ik_proc.process(track_model)
+
+    # Trim kinematic data to start and end times
+    ik_data.trim(start_time, end_time)
+
+    # Write to file
+    osim.STOFileAdapter().write(ik_data, f'{participant}run{speed}_kinematic_data.sto')
+
+    # Set up tracking simulation
+    # -------------------------------------------------------------------------
+
+    # Create tracking tool
+    track = osim.MocoTrack()
+    track.setName(f'{participant}run{speed}_marker_tracking')
+
+    # Set model
+    track_model_proc = osim.ModelProcessor(f'{participant}run{speed}_marker_tracking_complex.osim')
+    track.setModel(track_model_proc)
+
+    # Set the marker reference file and settings
+    track.setMarkersReferenceFromTRC(f'{participant}run{speed}.trc')
+    track.set_markers_global_tracking_weight(globalMarkerTrackingWeight)
+
+    # Set individual marker weights
+    marker_weight_set = osim.MocoWeightSet()
+    for marker in marker_weights.keys():
+        marker_weight_set.cloneAndAppend(osim.MocoWeight(marker, marker_weights[marker]['weight']))
+    track.set_markers_weight_set(marker_weight_set)
+
+    # Set to ignore unused columns
+    track.set_allow_unused_references(True)
+
+    # Set the timings
+    track.set_initial_time(start_time)
+    track.set_final_time(end_time)
+
+    # Initialise to a Moco study and problem to finalise
+    # -------------------------------------------------------------------------
+
+    # Get study and problem
+    study = track.initialize()
+    problem = study.updProblem()
+
+    # Update control effort goal
+    # -------------------------------------------------------------------------
+
+    # Get a reference to the MocoControlCost goal and set parameters
+    effort = osim.MocoControlGoal.safeDownCast(problem.updGoal('control_effort'))
+    effort.setWeight(globalTorqueControlWeight)
+    effort.setExponent(2)
+
+    # Update individual weights in control effort goal
+    # Put higher weight on residual use
+    effort.setWeightForControlPattern('/forceset/.*_residual', 10.0)
+    # Put heavy weight on the reserve actuators
+    effort.setWeightForControlPattern('/forceset/.*_torque', 0.1)
+
+    # Define and configure the solver
+    # -------------------------------------------------------------------------
+
+    # Get the solver
+    solver = osim.MocoCasADiSolver.safeDownCast(study.updSolver())
+
+    # Solver settings
+    solver.set_optim_max_iterations(2000)
+    solver.set_num_mesh_intervals(meshIntervalTorque)
+    solver.set_optim_constraint_tolerance(1e-3)
+    solver.set_optim_convergence_tolerance(1e-3)
+
+    # Get the initial guess
+    guess = solver.getGuess()
+
+    # Get and resample the guess to match IK
+    guess.resampleWithNumTimes(ik_data.getNumRows())
+
+    # Insert the desired values from IK
+    for col in guess.getStateNames():
+        if col in ik_data.getColumnLabels():
+            guess.setState(col, ik_data.getDependentColumn(col).to_numpy())
+
+    # Write to file for reference
+    guess.write(f'{participant}run{speed}_initial_guess.sto')
+
+    # Set guess in solver
+    solver.setGuessFile(f'{participant}run{speed}_initial_guess.sto')
+
+    # Reset problem to check any issues
+    solver.resetProblem(problem)
+
+    # Solve the problem
+    # -------------------------------------------------------------------------
+
+    # Set-up timer to track computation time
+    computation_start = time.time()
+
+    # Solve!
+    tracking_solution = study.solve()
+
+    # End computation timer and record
+    computation_run_time = round(time.time() - computation_start, 2)
+
+    # # Option to visualise solution
+    # study.visualize(tracking_solution)
+
+    # Save files and finalize
+    # -------------------------------------------------------------------------
+
+    # Write solution to file
+    if tracking_solution.isSealed():
+        tracking_solution.unseal()
+    tracking_solution.write(f'{participant}run{speed}_marker_tracking_solution.sto')
+
+    # Save a dictionary storing computational time
+    computation = {'time_s': computation_run_time,
+                   'note': f'Torque driven marker tracking computation time for {participant} {speed}'}
+    with open(f'{participant}run{speed}_marker_tracking_computation_time.pkl', 'wb') as pkl_file:
+        pickle.dump(computation, pkl_file)
+
+    # Remove initial tracked states and markers file
+    os.remove(f'{participant}run{speed}_marker_tracking_tracked_markers.sto')
+
+    # Create an inverse dynamics like file for joint moments from tracking solution
+    # Export the controls from the solution
+    controls_table = tracking_solution.exportToControlsTable()
+    # Create new torque columns from the control signals to have the torque values in Nm
+    for col in controls_table.getColumnLabels():
+        if col.endswith('_torque'):
+            # Calculate torque in Nm
+            torque_nm = controls_table.getDependentColumn(
+                col).to_numpy() * act_forces[col.replace('/forceset/','').replace('_torque','')]['optForce']
+            # Append column to table
+            controls_table.appendColumn(col.replace('/forceset/',''), osim.Vector().createFromMat(torque_nm))
+            # Remove the controls column
+            controls_table.removeColumn(col)
         else:
-            for ii in range(0, len(thresholdInd), 2):
-                contactPairs.append(thresholdInd[ii:ii + 2])
+            controls_table.removeColumn(col)
+    # Use table processor to filter torques
+    torque_table_proc = osim.TableProcessor(controls_table)
+    torque_table_proc.append(osim.TabOpLowPassFilter(kinematic_filt_freq))
+    final_torques = torque_table_proc.process()
+    final_torques.trim(controls_table.getIndependentColumn()[0],controls_table.getIndependentColumn()[-1])
+    # Write to file
+    osim.STOFileAdapter().write(final_torques, f'{participant}run{speed}_marker_tracking_torques.sto')
 
-        # Trim last contact pair if only single contact (i.e. contact stayed on plate at end of trial
-        if len(contactPairs[-1]) == 1:
-            contactPairs = contactPairs[:-1]
+    # Return to home directory
+    os.chdir(home_dir)
 
-        # Re-pair first listed indices to create full gait cycle pairings
-        gaitCyclePairs = []
-        for ii in range(len(contactPairs) - 1):
-            gaitCyclePairs.append((contactPairs[ii][0], contactPairs[ii + 1][0]))
+    # Print out to console as a bookmark in any log file
+    print(f'{"*"*10} FINISHED MARKER TRACKING FOR {participant} {speed} {"*"*10}')
 
-        # Randomly sample the desired number of cycles from the contact pairs
-        random.seed(int(''.join(ii for ii in participant if ii.isdigit())) + int(''.join(ii for ii in trialName if ii.isdigit())))
-        selectCycles = random.sample(gaitCyclePairs, nGaitCycles)
 
-        # Identify timings of selected cycles
-        gaitTimings = [(trialGRF.getIndependentColumn()[selectCycles[ii][0]],
-                        trialGRF.getIndependentColumn()[selectCycles[ii][1]]) for ii in range(nGaitCycles)]
+# Run static optimisation
+# -------------------------------------------------------------------------
+def run_static_optimisation(model_type):
 
-        # Run simulations of each gait cycle
-        # -------------------------------------------------------------------------
+    """
 
-        # Loop through gait cycles
-        for ii in range(nGaitCycles):
+    This function runs static optimisation on the stance phase of a gait cycle
+    to estimate the muscle forces driving the motion and subsequent quadriceps
+    forces to use in the PFJRF mechanical model.
+    
+    :param model_type: string of "complex" or "simple" to dictate the model to use
+    :return:
 
-            # Set-up files for simulation
-            # -------------------------------------------------------------------------
+    """
 
-            # Navigate to simulation folder for ease of use
-            homeDir = os.getcwd()
-            os.chdir(os.path.join('..', 'simulations', participant, trialName, 'torque-driven', f'cycle_{ii+1}'))
+    # Do an initial input check as the function won't work with an incorrect model type
+    if model_type != 'complex' and model_type != 'simple':
+        raise ValueError('model_type variable must be string of "complex" or "simple".')
 
-            # Copy external loads file to simulation directory
-            shutil.copyfile(os.path.join('..', '..', '..', '..', '..', 'data', participant, f'{participant}{trialName}_grf.mot'),
-                            f'{participant}{trialName}_grf.mot')
-            shutil.copyfile(os.path.join('..', '..', '..', '..', '..', 'data', participant, f'{participant}{trialName}_grf.xml'),
-                            f'{participant}{trialName}_grf.xml')
+    # =========================================================================
+    # Set-up files and parameters for simulation
+    # =========================================================================
 
-            # Copy marker file to simulation directory
-            shutil.copyfile(os.path.join('..', '..', '..', '..', '..', 'data', participant, f'{participant}{trialName}.trc'),
-                            f'{participant}{trialName}.trc')
-
-            # Run inverse kinematics to get tracking guess
-            # -------------------------------------------------------------------------
-
-            # Create IK tool
-            ikTool = osim.InverseKinematicsTool()
-
-            # Set to report marker locations in tool
-            ikTool.set_report_marker_locations(True)
-
-            # Set tasks in IK tool
-            for markerName in markerWeightParams.keys():
-                if markerWeightParams[markerName]['weight'] != 0:
-                    task = osim.IKMarkerTask()
-                    task.setName(markerName)
-                    task.setWeight(markerWeightParams[markerName]['weight'])
-                    ikTool.getIKTaskSet().cloneAndAppend(task)
-
-            # Set the model to use in IK
-            ikTool.set_model_file(os.path.join('..', '..', '..', 'scaling', f'{participant}_scaledModelAdjusted.osim'))
-
-            # Set marker file
-            ikTool.setMarkerDataFileName(f'{participant}{trialName}.trc')
-
-            # Set times to start and end of marker file
-            ikTool.setStartTime(gaitTimings[ii][0])
-            ikTool.setEndTime(gaitTimings[ii][1])
-
-            # Set output file
-            ikTool.setOutputMotionFileName(f'{participant}{trialName}_ik.mot')
-
-            # Save IK file to base directory to bring back in and run
-            ikTool.printToXML(f'{participant}{trialName}_ikSetup.xml')
-
-            # Bring the tool back in and run standard IK (this seems to avoid Python kernel crashing)
-            ikRun = osim.InverseKinematicsTool(f'{participant}{trialName}_ikSetup.xml')
-            ikRun.run()
-
-            # Rename marker error and location files
-            shutil.move('_ik_marker_errors.sto', f'{participant}{trialName}_ikMarkerErrors.sto')
-            shutil.move('_ik_model_marker_locations.sto', f'{participant}{trialName}_ikModelMarkerLocations.sto')
-
-            # Clean up kinematic data for tracking guess
-            # -------------------------------------------------------------------------
-
-            # Load in the kinematic data
-            kinematicsStorage = osim.Storage(f'{participant}{trialName}_ik.mot')
-
-            # Create a copy of the kinematics data to alter the column labels in
-            statesStorage = osim.Storage(f'{participant}{trialName}_ik.mot')
-
-            # Filter both storage objects
-            # Note that this resamples time stamps so eliminates the need to do so
-            kinematicsStorage.lowpassFIR(4, kinematicFiltFreq)
-            statesStorage.lowpassFIR(4, kinematicFiltFreq)
-
-            # Get the column headers for the storage file
-            angleNames = kinematicsStorage.getColumnLabels()
-
-            # Get the corresponding full paths from the model to rename the
-            # angles in the kinematics file
-            kinematicModel = osim.Model(os.path.join('..', '..', '..', 'scaling', f'{participant}_scaledModelAdjusted.osim'))
-            for angNo in range(angleNames.getSize()):
-                currAngle = angleNames.get(angNo)
-                if currAngle != 'time':
-                    # Try getting the full path to coordinate
-                    # This may fail due to their being marker data included in these files
-                    try:
-                        # Loo for full coordinate path
-                        fullPath = kinematicModel.updCoordinateSet().get(currAngle).getAbsolutePathString() + '/value'
-                        # Set angle name appropriately using full path
-                        angleNames.set(angNo, fullPath)
-                    except:
-                        # Print out that current column isn't a coordinate
-                        print(f'{currAngle} not a coordinate...skipping name conversion...')
-                        # Set to the same as originaly
-                        angleNames.set(angNo, currAngle)
-
-            # Set the states storage object to have the updated column labels
-            statesStorage.setColumnLabels(angleNames)
-
-            # Convert from IK default of degrees to radians
-            kinematicModel.initSystem()
-            kinematicModel.getSimbodyEngine().convertDegreesToRadians(statesStorage)
-
-            # Write the states storage object to file
-            statesStorage.printToXML(f'{participant}{trialName}_coordinates.sto')
-
-            # Set up model for tracking simulation
-            # -------------------------------------------------------------------------
-
-            # Construct a model processor to use with the tool
-            modelProc = osim.ModelProcessor(os.path.join('..', '..', '..', 'scaling', f'{participant}_scaledModelAdjusted.osim'))
-
-            # Append external loads
-            modelProc.append(osim.ModOpAddExternalLoads(f'{participant}{trialName}_grf.xml'))
-
-            # Weld desired locked joints
-            # Create vector string object
-            weldVectorStr = osim.StdVectorString()
-            [weldVectorStr.append(joint) for joint in ['mtp_r', 'mtp_l']]
-            # Append to model processor
-            modelProc.append(osim.ModOpReplaceJointsWithWelds(weldVectorStr))
-
-            # Remove muscles from model
-            modelProc.append(osim.ModOpRemoveMuscles())
-
-            # Process model for further edits
-            trackingModel = modelProc.process()
-
-            # Add coordinate actuators to model
-            for coordinate in actForces:
-                # Create actuator
-                actu = osim.CoordinateActuator()
-                # Set name
-                actu.setName(f'{coordinate}_{actForces[coordinate]["actuatorType"]}')
-                # Set coordinate
-                actu.setCoordinate(trackingModel.updCoordinateSet().get(coordinate))
-                # Set optimal force
-                actu.setOptimalForce(actForces[coordinate]['optForce'])
-                # Set min and max control
-                actu.setMinControl(np.inf * -1)
-                actu.setMaxControl(np.inf * 1)
-                # Append to model force set
-                trackingModel.updForceSet().cloneAndAppend(actu)
-
-            # Finalise model connections
-            trackingModel.finalizeConnections()
-
-            # Print model to file in tracking directory
-            trackingModel.printToXML(f'{participant}{trialName}_{ii+1}_torque-driven_model.osim')
-
-            # Set up tracking simulation
-            # -------------------------------------------------------------------------
-
-            # Create tracking tool
-            track = osim.MocoTrack()
-            track.setName(f'{participant}{trialName}_{ii+1}_torque-driven')
-
-            # Set model
-            trackModelProc = osim.ModelProcessor(f'{participant}{trialName}_{ii+1}_torque-driven_model.osim')
-            track.setModel(trackModelProc)
-
-            # Set the marker reference file and settings
-            track.setMarkersReferenceFromTRC(f'{participant}{trialName}.trc')
-            track.set_markers_global_tracking_weight(globalMarkerTrackingWeight)
-
-            # # Set the coordinates reference file and settings
-            # # Note that a zero or quite low weight can be set here if desired
-            # tableProcessor = osim.TableProcessor(f'{participant}{trialName}_coordinates.sto')
-            # track.setStatesReference(tableProcessor)
-            # track.set_states_global_tracking_weight(1e-2)  # TODO: zero/low weight for tracking coordinates?
-            # track.set_track_reference_position_derivatives(True)
-            # track.set_apply_tracked_states_to_guess(True)
-
-            # Set to ignore unused columns
-            track.set_allow_unused_references(True)
-
-            # Set individual marker weights
-            markerWeights = osim.MocoWeightSet()
-            for marker in markerWeightParams.keys():
-                if markerWeightParams[marker]['weight'] != 0:
-                    markerWeights.cloneAndAppend(osim.MocoWeight(marker, markerWeightParams[marker]['weight']))
-            track.set_markers_weight_set(markerWeights)
-
-            # Set the timings
-            # Slightly different due to potential re-sampling of time-stamps
-            # track.set_initial_time(osim.TimeSeriesTable(f'{participant}{trialName}_coordinates.sto').getIndependentColumn()[0])
-            # track.set_final_time(osim.TimeSeriesTable(f'{participant}{trialName}_coordinates.sto').getIndependentColumn()[-1])
-            track.set_initial_time(gaitTimings[ii][0])
-            track.set_final_time(gaitTimings[ii][1])
-            # track.set_mesh_interval(meshIntervalStep)
-
-            # Initialise to a Moco study and problem to finalise
-            # -------------------------------------------------------------------------
-
-            # Get study and problem
-            study = track.initialize()
-            problem = study.updProblem()
-
-            # Update control effort goal
-            # -------------------------------------------------------------------------
-
-            # Get a reference to the MocoControlCost goal and set parameters
-            effort = osim.MocoControlGoal.safeDownCast(problem.updGoal('control_effort'))
-            effort.setWeight(globalTorqueControlEffortGoal)
-            effort.setExponent(2)
-
-            # Update individual weights in control effort goal
-            # Put higher weight on residual use
-            # TODO: higher residual weight?
-            effort.setWeightForControlPattern('/forceset/.*_residual', 5.0)
-            # Put heavy weight on the reserve actuators
-            effort.setWeightForControlPattern('/forceset/.*_torque', 1.0)
-
-            # Option to update marker tracking goal
-            # -------------------------------------------------------------------------
-
-            # TODO: enforce in a constraint manner so markers remain within threshold?
-
-            # # Get a reference to the marker tracking goal
-            # tracking = osim.MocoMarkerTrackingGoal.safeDownCast(problem.updGoal('marker_tracking'))
-
-            # Update states tracking goal
-            # With a zero weighted goal I doubt this does anything
-            # -------------------------------------------------------------------------
-
-            # # Get a reference to the states tracking goal
-            # tracking = osim.MocoStateTrackingGoal.safeDownCast(problem.updGoal('state_tracking'))
-            # tracking.setScaleWeightsWithRange(True)
-
-            # Define and configure the solver
-            # -------------------------------------------------------------------------
-            solver = osim.MocoCasADiSolver.safeDownCast(study.updSolver())
-
-            # Modify initial guess to use IK kinematics
-
-            # Get the guess
-            guess = solver.getGuess()
-
-            # Get and resample the guess to match IK
-            ikData = osim.TimeSeriesTable(f'{participant}{trialName}_coordinates.sto')
-            guess.resampleWithNumTimes(ikData.getNumRows())
-
-            # Insert the desired values from IK
-            for colName in guess.getStateNames():
-                if colName.endswith('/value') and colName in ikData.getColumnLabels():
-                    guess.setState(colName, ikData.getDependentColumn(colName).to_numpy())
-
-            # Write to file for reference
-            guess.write(f'{participant}{trialName}_initialGuess.sto')
-
-            # Set solver options
-            solver.set_optim_max_iterations(2000)
-            solver.set_num_mesh_intervals(meshIntervalTorque)
-            solver.set_optim_constraint_tolerance(1e-3)
-            solver.set_optim_convergence_tolerance(1e-3)
-            # solver.set_minimize_implicit_multibody_accelerations(True)  # smoothness criterion?
-            # solver.set_implicit_multibody_accelerations_weight(1e-2)
-            solver.setGuessFile(f'{participant}{trialName}_initialGuess.sto')
-            solver.resetProblem(problem)
-
-            # Solve the problem
-            # -------------------------------------------------------------------------
-            trackingSolution = study.solve()
-
-            # # Option to visualise solution
-            # study.visualize(trackingSolution)
-
-            # Save files and finalize
-            # -------------------------------------------------------------------------
-
-            # Write solution to file
-            if trackingSolution.isSealed():
-                trackingSolution.unseal()
-            trackingSolution.write(f'{participant}{trialName}_{ii+1}_torque-driven_marker-solution.sto')
-
-            # Remove initial tracked states and markers file
-            os.remove(f'{participant}{trialName}_{ii+1}_torque-driven_tracked_markers.sto')
-
-            # # Extract joint reaction forces from solution
-            # jrfTable = osim.analyzeMocoTrajectorySpatialVec(trackingModel, trackingSolution,
-            #                                                 ['.*patellofemoral_r.*reaction_on_child']).flatten()
-            # osim.STOFileAdapter().write(jrfTable, f'{participant}{trialName}_{ii+1}_trackingSolution_JRF.sto')
-            #
-            # # Extract muscle forces from solution
-            # outputPaths = osim.StdVectorString()
-            # outputPaths.append('.*tendon_force')
-            # muscleForceTable = osim.analyzeMocoTrajectory(trackingModel, trackingSolution, outputPaths)
-            # osim.STOFileAdapter().write(muscleForceTable, f'{participant}{trialName}_{ii+1}_trackingSolution_muscleForce.sto')
-
-            # Return to home directory
-            os.chdir(homeDir)
-
-            # Print out to console as a bookmark in any log file
-            # TODO: other logging notes...
-            print(f'***** ----- FINISHED TORQUE TRACKING SIM FOR CONDITION {participant}{trialName} GAIT CYCLE {ii+1} ----- *****')
-
-# =========================================================================
-# Run muscle driven inverse simulation
-# =========================================================================
-
-"""
-
-TODO: add notes...
-
-"""
-
-# Check for running simulations
-if runMuscleSim:
-
-    # Identify trials for running simulations
+    # Files and settings
     # -------------------------------------------------------------------------
 
-    # Look up the running trial names from torque-driven simulations that match the speed condition list
-    simList = []
-    for speed in speedList:
-        for ii in range(nGaitCycles):
-            if os.path.exists(os.path.join('..', 'simulations', participant, f'run{speed}', 'torque-driven', f'cycle_{ii+1}',
-                                           f'{participant}run{speed}_{ii+1}_torque-driven_marker-solution.sto')):
-                simList.append(os.path.join('..', 'simulations', participant, f'run{speed}', 'torque-driven', f'cycle_{ii+1}',
-                                            f'{participant}run{speed}_{ii+1}_torque-driven_marker-solution.sto'))
+    # Create the folder for simulation
+    os.makedirs(os.path.join('..','simulations',participant,speed,'static_optimisation',model_type), exist_ok=True)
 
-    # Set general parameters for simulations
+    # Navigate to simulation folder for ease of use
+    home_dir = os.getcwd()
+    os.chdir(os.path.join('..', 'simulations', participant, speed, 'static_optimisation',model_type))
+
+    # Copy external loads file to simulation directory
+    shutil.copyfile(
+        os.path.join('..','..', '..', '..', '..', 'data', participant, f'{participant}run{speed}_grf.mot'),
+        f'{participant}run{speed}_grf.mot')
+    shutil.copyfile(
+        os.path.join('..','..', '..', '..', '..', 'data', participant, f'{participant}run{speed}_grf.xml'),
+        f'{participant}run{speed}_grf.xml')
+
+    # Copy states from marker tracking
+    # Noisiness is sometimes introduced in these torque drive tracking simulations so some filtering is done here
+    marker_traj = osim.MocoTrajectory(
+        os.path.join('..', '..', 'marker_tracking', f'{participant}run{speed}_marker_tracking_solution.sto'))
+    states_table_proc = osim.TableProcessor(marker_traj.exportToStatesTable())
+    states_table_proc.append(osim.TabOpLowPassFilter(kinematic_filt_freq))
+    states_table = states_table_proc.process()
+    states_table.trim(marker_traj.getInitialTime(), marker_traj.getFinalTime())
+    osim.STOFileAdapter().write(states_table, f'{participant}run{speed}_states.sto')
+
+    # Check for simple model and need to invert knee angle in states
+    if model_type == 'simple':
+        # Read in data
+        states_data = osim.TimeSeriesTable(f'{participant}run{speed}_states.sto')
+        # Create new columns for values and speeds. Remove the existing columns
+        adjust_cols = ['/jointset/walker_knee_l/knee_angle_l/value',
+                       '/jointset/walker_knee_l/knee_angle_l/speed',
+                       '/jointset/walker_knee_r/knee_angle_r/value',
+                       '/jointset/walker_knee_r/knee_angle_r/speed',
+                       ]
+        for col in adjust_cols:
+            # Create and append the new column
+            states_data.appendColumn(col.replace('/walker_knee_','/knee_'),
+                                     osim.Vector().createFromMat(states_data.getDependentColumn(col).to_numpy()*-1))
+            # Remove the old one
+            states_data.removeColumn(col)
+        # Remove the patellofemoral joint columns
+        for col in states_data.getColumnLabels():
+            if 'patellofemoral_' in col:
+                states_data.removeColumn(col)
+        # Save new states data to file
+        osim.STOFileAdapter().write(states_data, f'{participant}run{speed}_states.sto')
+
+    # Set actuator forces to support simulation
+    act_forces = {'pelvis_tx': {'actuatorType': 'residual', 'optForce': 5},
+                  'pelvis_ty': {'actuatorType': 'residual', 'optForce': 5},
+                  'pelvis_tz': {'actuatorType': 'residual', 'optForce': 5},
+                  'pelvis_tilt': {'actuatorType': 'residual', 'optForce': 2.5},
+                  'pelvis_list': {'actuatorType': 'residual', 'optForce': 2.5},
+                  'pelvis_rotation': {'actuatorType': 'residual', 'optForce': 2.5},
+                  'hip_flexion_r': {'actuatorType': 'reserve', 'optForce': 5.0},
+                  'hip_adduction_r': {'actuatorType': 'reserve', 'optForce': 5.0},
+                  'hip_rotation_r': {'actuatorType': 'reserve', 'optForce': 5.0},
+                  'knee_angle_r': {'actuatorType': 'reserve', 'optForce': 5.0},
+                  'ankle_angle_r': {'actuatorType': 'reserve', 'optForce': 5.0},
+                  'hip_flexion_l': {'actuatorType': 'torque', 'optForce': 300.0},
+                  'hip_adduction_l': {'actuatorType': 'torque', 'optForce': 200.0},
+                  'hip_rotation_l': {'actuatorType': 'torque', 'optForce': 100.0},
+                  'knee_angle_l': {'actuatorType': 'torque', 'optForce': 300.0},
+                  'ankle_angle_l': {'actuatorType': 'torque', 'optForce': 200.0},
+                  }
+
+    # Prepare model for static optimisation
     # -------------------------------------------------------------------------
 
-    # Set actuator forces to drive simulations
-    actForces = {'pelvis_tx': {'actuatorType': 'residual', 'optForce': 5},
-                 'pelvis_ty': {'actuatorType': 'residual', 'optForce': 5},
-                 'pelvis_tz': {'actuatorType': 'residual', 'optForce': 5},
-                 'pelvis_tilt': {'actuatorType': 'residual', 'optForce': 2.5},
-                 'pelvis_list': {'actuatorType': 'residual', 'optForce': 2.5},
-                 'pelvis_rotation': {'actuatorType': 'residual', 'optForce': 2.5},
-                 'hip_flexion_r': {'actuatorType': 'reserve', 'optForce': 2.5},
-                 'hip_adduction_r': {'actuatorType': 'reserve', 'optForce': 1.0},
-                 'hip_rotation_r': {'actuatorType': 'reserve', 'optForce': 1.0},
-                 'knee_angle_r': {'actuatorType': 'reserve', 'optForce': 2.5},
-                 'ankle_angle_r': {'actuatorType': 'reserve', 'optForce': 2.5},
-                 'subtalar_angle_r': {'actuatorType': 'reserve', 'optForce': 1.0},
-                 'hip_flexion_l': {'actuatorType': 'reserve', 'optForce': 2.5},
-                 'hip_adduction_l': {'actuatorType': 'reserve', 'optForce': 1.0},
-                 'hip_rotation_l': {'actuatorType': 'reserve', 'optForce': 1.0},
-                 'knee_angle_l': {'actuatorType': 'reserve', 'optForce': 2.5},
-                 'ankle_angle_l': {'actuatorType': 'reserve', 'optForce': 2.5},
-                 'subtalar_angle_l': {'actuatorType': 'reserve', 'optForce': 1.0},
-                 }
+    # Construct a model processor to use with the tool
+    model_proc = osim.ModelProcessor(os.path.join('..','..', '..', '..', '..', 'data', participant, 'scaling',
+                                                  f'{participant}_{model_type}.osim'))
 
-    # Simulate gait cycles from identified trials
+    # Increase muscle isometric force by a scaling factor to deal with potentially higher muscle forces
+    model_proc.append(osim.ModOpScaleMaxIsometricForce(1.5))
+
+    # Process model for further edits
+    opt_model = model_proc.process()
+
+    # Add coordinate actuators to model
+    for coordinate in act_forces:
+        # Create actuator
+        actu = osim.CoordinateActuator()
+        # Set name
+        actu.setName(f'{coordinate}_{act_forces[coordinate]["actuatorType"]}')
+        # Set coordinate
+        actu.setCoordinate(opt_model.updCoordinateSet().get(coordinate))
+        # Set optimal force
+        actu.setOptimalForce(act_forces[coordinate]['optForce'])
+        # Set min and max control
+        actu.setMinControl(np.inf * -1)
+        actu.setMaxControl(np.inf * 1)
+        # Append to model force set
+        opt_model.updForceSet().cloneAndAppend(actu)
+
+    # Adjust limits on muscle activations to produce necessary force if needed
+    for muscle_ind in range(opt_model.getMuscles().getSize()):
+        musc = opt_model.getMuscles().get(muscle_ind)
+        musc.setMaxControl(np.inf)
+
+    # Finalise model connections
+    opt_model.finalizeConnections()
+
+    # Print model to file in tracking directory
+    opt_model.printToXML(f'{participant}run{speed}_static_optimisation_{model_type}.osim')
+
+    # Set-up static optimisation
     # -------------------------------------------------------------------------
 
-    # Loop through trials
-    for sim in simList:
+    # Create the analyze tool by reading in the pre-created utility
+    analyzeTool = osim.AnalyzeTool(
+        os.path.join(os.path.join(
+            '..','..', '..', '..', '..','utilities',f'static_optimisation_{model_type}.xml')),
+        False)
 
-        # Get generic trial name and solution file
-        trialName = os.path.split(sim)[0].split(os.sep)[3]
-        trackingSolutionFile = os.path.split(sim)[-1]
+    # Set tool name
+    analyzeTool.setName(f'{participant}run{speed}')
 
-        # Set-up folders and gait timings for trial
-        # -------------------------------------------------------------------------
+    # Set the model file
+    analyzeTool.setModelFilename(f'{participant}run{speed}_static_optimisation_{model_type}.osim')
 
-        # Create the folder for storing trial data
-        os.makedirs(os.path.join('..', 'simulations', participant, trialName, 'muscle-driven'), exist_ok=True)
+    # Set times for analysis
+    analyzeTool.setStartTime(osim.TimeSeriesTable(f'{participant}run{speed}_states.sto').getIndependentColumn()[0])
+    analyzeTool.setFinalTime(osim.TimeSeriesTable(f'{participant}run{speed}_states.sto').getIndependentColumn()[-1])
 
-        # Create the sub-folder for the current gait cycle to be simulated based on identified tracking solutions
-        cycleName = os.path.split(sim)[0].split(os.sep)[-1]
-        os.makedirs(os.path.join('..', 'simulations', participant, trialName, 'muscle-driven', cycleName), exist_ok=True)
+    # Set states file
+    analyzeTool.setStatesFileName(f'{participant}run{speed}_states.sto')
 
-        # Run simulation for the current gait cycle
-        # -------------------------------------------------------------------------
+    # Set external loads
+    analyzeTool.setExternalLoadsFileName(f'{participant}run{speed}_grf.xml')
 
-        # Set-up files for simulation
-        # -------------------------------------------------------------------------
+    # Save tool
+    analyzeTool.printToXML(f'{participant}run{speed}_setup_{model_type}.xml')
 
-        # Navigate to simulation folder for ease of use
-        homeDir = os.getcwd()
-        os.chdir(os.path.join('..', 'simulations', participant, trialName, 'muscle-driven', cycleName))
+    # Run static optimisation
+    # -------------------------------------------------------------------------
 
-        # Copy external loads file to simulation directory
-        shutil.copyfile(os.path.join('..', '..', 'torque-driven', cycleName, f'{participant}{trialName}_grf.mot'),
-                        f'{participant}{trialName}_grf.mot')
-        shutil.copyfile(os.path.join('..', '..', 'torque-driven', cycleName, f'{participant}{trialName}_grf.xml'),
-                        f'{participant}{trialName}_grf.xml')
+    # Set-up timer to track computation time
+    computation_start = time.time()
 
-        # Copy solution file to simulation directory
-        shutil.copyfile(os.path.join('..', '..', 'torque-driven', cycleName, trackingSolutionFile),
-                        trackingSolutionFile)
+    # Read the tool back in as this sometimes helps avoid Python crashing
+    runAnalysis = osim.AnalyzeTool(f'{participant}run{speed}_setup_{model_type}.xml')
 
-        # Set up model for inverse simulation
-        # -------------------------------------------------------------------------
+    # Run the tool
+    runAnalysis.run()
 
-        # Construct a model processor to use with the tool
-        modelProc = osim.ModelProcessor(os.path.join('..', '..', '..', 'scaling', f'{participant}_scaledModelAdjusted.osim'))
+    # End computation timer and record
+    computation_run_time = round(time.time() - computation_start, 2)
 
-        # Append external loads
-        modelProc.append(osim.ModOpAddExternalLoads(f'{participant}{trialName}_grf.xml'))
+    # Save a dictionary storing computational time
+    computation = {'time_s': computation_run_time,
+                   'note': f'Static optimisation {model_type} model computation time for {participant} {speed}'}
+    with open(f'{participant}run{speed}_static_optimisation_{model_type}_computation_time.pkl', 'wb') as pkl_file:
+        pickle.dump(computation, pkl_file)
 
-        # Weld desired locked joints
-        # Create vector string object
-        weldVectorStr = osim.StdVectorString()
-        [weldVectorStr.append(joint) for joint in ['mtp_r', 'mtp_l']]
-        # Append to model processor
-        modelProc.append(osim.ModOpReplaceJointsWithWelds(weldVectorStr))
+    # Return to home directory
+    os.chdir(home_dir)
 
-        # Convert muscles to DeGrooteFregley model
-        modelProc.append(osim.ModOpReplaceMusclesWithDeGrooteFregly2016())
+    # Print out to console as a bookmark in any log file
+    print(f'{"*" * 10} FINISHED STATIC OPTIMISATION FOR {participant} {speed} WITH {model_type.upper()} MODEL {"*" * 10}')
 
-        # Increase muscle isometric force by a scaling factor to deal with potentially higher muscle forces
-        modelProc.append(osim.ModOpScaleMaxIsometricForce(1.5))
 
-        # Set to ignore tendon compliance
-        modelProc.append(osim.ModOpIgnoreTendonCompliance())
+# Run dynamic optimisation
+# -------------------------------------------------------------------------
+def run_dynamic_optimisation(model_type):
 
-        # Ignore passive fibre forces
-        modelProc.append(osim.ModOpIgnorePassiveFiberForcesDGF())
+    """
 
-        # Scale active force curve width
-        modelProc.append(osim.ModOpScaleActiveFiberForceCurveWidthDGF(1.5))
+    This function runs dynamic optimisation on the stance phase of a gait cycle
+    to estimate the muscle forces driving the motion and subsequent quadriceps
+    forces to use in the PFJRF mechanical model.
 
-        # Process model for further edits
-        inverseModel = modelProc.process()
+    :param model_type: string of "complex" or "simple" to dictate the model to use
+    :return:
 
-        # Add coordinate actuators to model
-        for coordinate in actForces:
-            # Create actuator
-            actu = osim.CoordinateActuator()
-            # Set name
-            actu.setName(f'{coordinate}_{actForces[coordinate]["actuatorType"]}')
-            # Set coordinate
-            actu.setCoordinate(inverseModel.updCoordinateSet().get(coordinate))
-            # Set optimal force
-            actu.setOptimalForce(actForces[coordinate]['optForce'])
-            # Set min and max control
-            actu.setMinControl(np.inf * -1)
-            actu.setMaxControl(np.inf * 1)
-            # Append to model force set
-            inverseModel.updForceSet().cloneAndAppend(actu)
+    """
 
-        # Finalise model connections
-        inverseModel.finalizeConnections()
+    # Do an initial input check as the function won't work with an incorrect model type
+    if model_type != 'complex' and model_type != 'simple':
+        raise ValueError('model_type variable must be string of "complex" or "simple".')
 
-        # Print model to file in tracking directory
-        inverseModel.printToXML(f'{participant}{trialName}_{cycleName[-1]}_inverseModel.osim')
+    # =========================================================================
+    # Set-up files and parameters for simulation
+    # =========================================================================
 
-        # Set-up inverse simulation
-        # -------------------------------------------------------------------------
+    # Files and settings
+    # -------------------------------------------------------------------------
 
-        # Create inverse tool
-        inverse = osim.MocoInverse()
-        inverse.setName(f'{participant}{trialName}_{cycleName[-1]}')
+    # Create the folder for simulation
+    os.makedirs(os.path.join('..', 'simulations', participant, speed, 'dynamic_optimisation', model_type), exist_ok=True)
 
-        # Set model
-        inverse.setModel(osim.ModelProcessor(inverseModel))
+    # Navigate to simulation folder for ease of use
+    home_dir = os.getcwd()
+    os.chdir(os.path.join('..', 'simulations', participant, speed, 'dynamic_optimisation', model_type))
 
-        # Set coordinates in inverse simulation from tracking solution
-        values = osim.MocoTrajectory(trackingSolutionFile).exportToValuesTable()
-        values.addTableMetaDataString('inDegrees', 'no')
-        osim.STOFileAdapter().write(values, f'{participant}{trialName}_{cycleName[-1]}_coordinates.sto')
-        inverse.setKinematics(osim.TableProcessor(f'{participant}{trialName}_{cycleName[-1]}_coordinates.sto'))
+    # Copy external loads file to simulation directory
+    shutil.copyfile(
+        os.path.join('..', '..', '..', '..', '..', 'data', participant, f'{participant}run{speed}_grf.mot'),
+        f'{participant}run{speed}_grf.mot')
+    shutil.copyfile(
+        os.path.join('..', '..', '..', '..', '..', 'data', participant, f'{participant}run{speed}_grf.xml'),
+        f'{participant}run{speed}_grf.xml')
 
-        # Set times
-        inverse.set_initial_time(values.getIndependentColumn()[0])
-        inverse.set_final_time(values.getIndependentColumn()[-1])
+    # Copy states from marker tracking
+    # Noisiness is sometimes introduced in these torque drive tracking simulations so some filtering is done here
+    marker_traj = osim.MocoTrajectory(
+        os.path.join('..', '..', 'marker_tracking', f'{participant}run{speed}_marker_tracking_solution.sto'))
+    states_table_proc = osim.TableProcessor(marker_traj.exportToStatesTable())
+    states_table_proc.append(osim.TabOpLowPassFilter(kinematic_filt_freq))
+    states_table = states_table_proc.process()
+    states_table.trim(marker_traj.getInitialTime(), marker_traj.getFinalTime())
+    osim.STOFileAdapter().write(states_table, f'{participant}run{speed}_states.sto')
 
-        # Set kinematics to have extra columns (even though this shouldn't be an issue)
-        inverse.set_kinematics_allow_extra_columns(True)
+    # Check for simple model and need to invert knee angle in states
+    if model_type == 'simple':
+        # Read in data
+        states_data = osim.TimeSeriesTable(f'{participant}run{speed}_states.sto')
+        # Create new columns for values and speeds. Remove the existing columns
+        adjust_cols = ['/jointset/walker_knee_l/knee_angle_l/value',
+                       '/jointset/walker_knee_l/knee_angle_l/speed',
+                       '/jointset/walker_knee_r/knee_angle_r/value',
+                       '/jointset/walker_knee_r/knee_angle_r/speed',
+                       ]
+        for col in adjust_cols:
+            # Create and append the new column
+            states_data.appendColumn(col.replace('/walker_knee_', '/knee_'),
+                                     osim.Vector().createFromMat(states_data.getDependentColumn(col).to_numpy() * -1))
+            # Remove the old one
+            states_data.removeColumn(col)
+        # Remove the patellofemoral joint columns
+        for col in states_data.getColumnLabels():
+            if 'patellofemoral_' in col:
+                states_data.removeColumn(col)
+        # Save new states data to file
+        osim.STOFileAdapter().write(states_data, f'{participant}run{speed}_states.sto')
 
-        # Convert to Moco study for added flexibility
-        # -------------------------------------------------------------------------
+    # # Copy function based path set for muscles
+    # shutil.copyfile(
+    #     os.path.join('..', '..', '..', '..', '..', 'data', participant, 'scaling', f'{model_type}_fitter',
+    #                  f'{participant}_{model_type}_FunctionBasedPathSet.xml'),
+    #     f'{participant}_{model_type}_FunctionBasedPathSet.xml')
 
-        # Get the study and problem
-        study = inverse.initialize()
-        problem = study.updProblem()
+    # Set actuator forces to support simulation
+    act_forces = {'pelvis_tx': {'actuatorType': 'residual', 'optForce': 5},
+                  'pelvis_ty': {'actuatorType': 'residual', 'optForce': 5},
+                  'pelvis_tz': {'actuatorType': 'residual', 'optForce': 5},
+                  'pelvis_tilt': {'actuatorType': 'residual', 'optForce': 2.5},
+                  'pelvis_list': {'actuatorType': 'residual', 'optForce': 2.5},
+                  'pelvis_rotation': {'actuatorType': 'residual', 'optForce': 2.5},
+                  'hip_flexion_r': {'actuatorType': 'reserve', 'optForce': 5.0},
+                  'hip_adduction_r': {'actuatorType': 'reserve', 'optForce': 5.0},
+                  'hip_rotation_r': {'actuatorType': 'reserve', 'optForce': 5.0},
+                  'knee_angle_r': {'actuatorType': 'reserve', 'optForce': 5.0},
+                  'ankle_angle_r': {'actuatorType': 'reserve', 'optForce': 5.0},
+                  'hip_flexion_l': {'actuatorType': 'torque', 'optForce': 300.0},
+                  'hip_adduction_l': {'actuatorType': 'torque', 'optForce': 200.0},
+                  'hip_rotation_l': {'actuatorType': 'torque', 'optForce': 100.0},
+                  'knee_angle_l': {'actuatorType': 'torque', 'optForce': 300.0},
+                  'ankle_angle_l': {'actuatorType': 'torque', 'optForce': 200.0},
+                  }
 
-        # Update control effort goal
-        # -------------------------------------------------------------------------
+    # Prepare model for dynamic optimisation
+    # -------------------------------------------------------------------------
 
-        # Get a reference to the MocoControlCost goal and set parameters
-        effort = osim.MocoControlGoal.safeDownCast(problem.updGoal('excitation_effort'))
-        effort.setWeight(globalMuscleControlEffortGoal)
-        effort.setExponent(2)
+    # Construct a model processor to use with the tool
+    model_proc = osim.ModelProcessor(os.path.join('..', '..', '..', '..', '..', 'data', participant, 'scaling',
+                                                  f'{participant}_{model_type}.osim'))
 
-        # Update individual weights in control effort goal
-        # Put higher weight on residual use
-        effort.setWeightForControlPattern('/forceset/.*_residual', 2.5)
-        # Put heavy weight on the reserve actuators
-        effort.setWeightForControlPattern('/forceset/.*_reserve', 5.0)
+    # Increase muscle isometric force by a scaling factor to deal with potentially higher muscle forces
+    model_proc.append(osim.ModOpScaleMaxIsometricForce(1.5))
 
-        # Define and configure the solver
-        # -------------------------------------------------------------------------
-        solver = osim.MocoCasADiSolver.safeDownCast(study.updSolver())
+    # # Append muscle path set
+    # model_proc.append(osim.ModOpReplacePathsWithFunctionBasedPaths(f'{participant}_{model_type}_FunctionBasedPathSet.xml'))
+
+    # Process model for further edits
+    opt_model = model_proc.process()
+
+    # Add coordinate actuators to model
+    for coordinate in act_forces:
+        # Create actuator
+        actu = osim.CoordinateActuator()
+        # Set name
+        actu.setName(f'{coordinate}_{act_forces[coordinate]["actuatorType"]}')
+        # Set coordinate
+        actu.setCoordinate(opt_model.updCoordinateSet().get(coordinate))
+        # Set optimal force
+        actu.setOptimalForce(act_forces[coordinate]['optForce'])
+        # Set min and max control
+        actu.setMinControl(np.inf * -1)
+        actu.setMaxControl(np.inf * 1)
+        # Append to model force set
+        opt_model.updForceSet().cloneAndAppend(actu)
+
+    # Adjust limits on muscle activations to produce necessary force if needed
+    for muscle_ind in range(opt_model.getMuscles().getSize()):
+        musc = opt_model.getMuscles().get(muscle_ind)
+        musc.setMaxControl(np.inf)
+        osim.DeGrooteFregly2016Muscle().safeDownCast(musc).get_fiber_damping()
+        # # Option for elastic tendons on plantarflexor muscles
+        # # TODO: does this work?
+        # if musc.getName() in ['gaslat_r', 'gasmed_r', 'soleus_r']:
+        #     musc.set_ignore_tendon_compliance(False)
+        #     osim.DeGrooteFregly2016Muscle().safeDownCast(musc).set_tendon_compliance_dynamics_mode('implicit')
+        # Option to reduce fiber damping
+        osim.DeGrooteFregly2016Muscle().safeDownCast(musc).set_fiber_damping(1.0e-3)
+
+    # Print model to file in tracking directory
+    opt_model.printToXML(f'{participant}run{speed}_dynamic_optimisation_{model_type}.osim')
+
+    # Set-up Moco inverse simulation
+    # -------------------------------------------------------------------------
+
+    # Create inverse tool
+    inverse = osim.MocoInverse()
+    inverse.setName(f'{participant}run{speed}_{model_type}')
+
+    # Construct a model processor to use with the tool
+    model_proc = osim.ModelProcessor(f'{participant}run{speed}_dynamic_optimisation_{model_type}.osim')
+
+    # Append external loads
+    model_proc.append(osim.ModOpAddExternalLoads(f'{participant}run{speed}_grf.xml'))
+
+    # # Ignore passive fibre forces
+    # model_proc.append(osim.ModOpIgnorePassiveFiberForcesDGF())
+
+    # Scale active force curve width
+    model_proc.append(osim.ModOpScaleActiveFiberForceCurveWidthDGF(1.5))
+
+    # Set model
+    inverse.setModel(model_proc)
+
+    # Set kinematics
+    inverse.setKinematics(osim.TableProcessor(f'{participant}run{speed}_states.sto'))
+
+    # Set times
+    start_time = osim.TimeSeriesTable(f'{participant}run{speed}_states.sto').getIndependentColumn()[0]
+    end_time = osim.TimeSeriesTable(f'{participant}run{speed}_states.sto').getIndependentColumn()[-1]
+    inverse.set_initial_time(start_time)
+    inverse.set_final_time(end_time)
+
+    # Set kinematics to have extra columns (even though this shouldn't be an issue)
+    inverse.set_kinematics_allow_extra_columns(True)
+
+    # Convert to Moco study for added flexibility
+    # -------------------------------------------------------------------------
+
+    # Get the study and problem
+    study = inverse.initialize()
+    problem = study.updProblem()
+
+    # Update control effort goal
+
+    # Get a reference to the MocoControlCost goal and set parameters
+    effort = osim.MocoControlGoal.safeDownCast(problem.updGoal('excitation_effort'))
+    effort.setWeight(globalMuscleControlWeight)
+    effort.setExponent(2)
+
+    # Update individual weights in control effort goal
+    # Put higher weight on residual use
+    effort.setWeightForControlPattern('/forceset/.*_residual', 10.0)
+    # Put heavy weight on the reserve actuators
+    effort.setWeightForControlPattern('/forceset/.*_reserve', 5.0)
+    # Set standard weights on muscle controls
+    # This probably doesn't change default but provides an option to set
+    effort.setWeightForControlPattern('/forceset/.*_r', 1.0)
+
+    # Define and configure the solver
+    # -------------------------------------------------------------------------
+
+    # Get the solver
+    solver = osim.MocoCasADiSolver.safeDownCast(study.updSolver())
+    solver.resetProblem(problem)
+
+    # Set-up timer to track total computation time
+    computation_start = time.time()
+
+    # Loop through mesh intervals using mesh refinement approach
+    for mesh_int in meshIntervalMuscle:
 
         # Set solver options
-        solver.set_optim_max_iterations(1000)
-        solver.set_num_mesh_intervals(meshIntervalMuscle) # TODO: appropriate interval?
-        solver.set_optim_constraint_tolerance(1e-2)   # TODO: appropriate?
-        solver.set_optim_convergence_tolerance(1e-3)  # TODO: appropriate?
+        solver.set_optim_max_iterations(2000)
+        solver.set_num_mesh_intervals(mesh_int)
+        solver.set_optim_constraint_tolerance(1e-2)
+        solver.set_optim_convergence_tolerance(1e-3)
+        solver.set_minimize_implicit_auxiliary_derivatives(True)
+        solver.set_implicit_auxiliary_derivatives_weight(1.0e-3)
         solver.resetProblem(problem)
 
+        # Create generic initial guess for coarsest mesh interval
+        if meshIntervalMuscle.index(mesh_int) == 0:
+            # Create initial guess from solver
+            initial_guess = solver.createGuess('bounds')
+            # Set muscle states and controls to a reasonable mid-point value in guess
+            for state in initial_guess.getStateNames():
+                if state.endswith('/activation'):
+                    initial_guess.setState(state, np.ones(initial_guess.getNumTimes())*0.5)
+                if state.endswith('/normalized_tendon_force'):
+                    initial_guess.setState(state, np.ones(initial_guess.getNumTimes()) * 0.1)
+            for control in initial_guess.getControlNames():
+                if control.endswith('_r'):
+                    initial_guess.setControl(control, np.ones(initial_guess.getNumTimes())*0.5)
+            # Save initial guess to file
+            initial_guess.write(f'{participant}run{speed}_initial_guess_mesh-int-{mesh_int}.sto')
+            # Set guess in solver
+            solver.setGuess(initial_guess)
+        else:
+            # Create initial guess from solver
+            initial_guess = solver.createGuess('bounds')
+            # Load the previous coarse interval to fill guess data
+            # This seems to work better than setting the guess file for some reason, perhaps because it doesn't
+            # include residual and reserve torque values
+            prev_mesh = meshIntervalMuscle[meshIntervalMuscle.index(mesh_int)-1]
+            prev_solution = osim.MocoTrajectory(
+                f'{participant}run{speed}_dynamic_optimisation_{model_type}_solution_mesh-int-{prev_mesh}.sto')
+            # Set guess to match number of times
+            initial_guess.resampleWithNumTimes(prev_solution.getNumTimes())
+            # Fill the guess with the data from the previous solution
+            for state in initial_guess.getStateNames():
+                initial_guess.setState(state, prev_solution.getState(state).to_numpy())
+            for control in initial_guess.getControlNames():
+                if not (control.endswith('_residual') or control.endswith('_reserve')):
+                    initial_guess.setControl(control, prev_solution.getControl(control).to_numpy())
+            for multiplier in initial_guess.getMultiplierNames():
+                initial_guess.setMultiplier(multiplier, prev_solution.getMultiplier(multiplier).to_numpy())
+            # Save initial guess to file
+            initial_guess.write(f'{participant}run{speed}_initial_guess_mesh-int-{mesh_int}.sto')
+            # Set guess in solver
+            solver.setGuess(initial_guess)
+
         # Solve the problem
-        # -------------------------------------------------------------------------
-        inverseSolution = study.solve()
-
-        # # Option to visualise solution
-        # study.visualize(inverseSolution)
-
-        # Save files and finalize
-        # -------------------------------------------------------------------------
+        inverse_solution = study.solve()
 
         # Write solution to file
-        if inverseSolution.isSealed():
-            inverseSolution.unseal()
-        inverseSolution.write(f'{participant}{trialName}_{cycleName[-1]}_inverseSolution.sto')
+        if inverse_solution.isSealed():
+            inverse_solution.unseal()
+        inverse_solution.write(
+            f'{participant}run{speed}_dynamic_optimisation_{model_type}_solution_mesh-int-{mesh_int}.sto')
 
-        # Get the inverse and tracking trajectory to combine the data for analyses
-        inverseTrajectory = osim.MocoTrajectory(f'{participant}{trialName}_{cycleName[-1]}_inverseSolution.sto')
-        trackingTrajectory = osim.MocoTrajectory(trackingSolutionFile)
+    # Store final outputs
+    # -------------------------------------------------------------------------
 
-        # Resample tracking to match inverse solution
-        trackingTrajectory.resampleWithNumTimes(inverseTrajectory.getNumTimes())
+    # End computation timer and record
+    computation_run_time = round(time.time() - computation_start, 2)
 
-        # Insert the values and speeds from tracking simulation into inverse solution
+    # Save a dictionary storing computational time
+    computation = {'time_s': computation_run_time,
+                   'note': f'Dynamic optimisation {model_type} model computation time for {participant} {speed}'}
+    with open(f'{participant}run{speed}_dynamic_optimisation_{model_type}_computation_time.pkl', 'wb') as pkl_file:
+        pickle.dump(computation, pkl_file)
 
-        # Get the necessary values, speeds and states
-        trackingValues = trackingTrajectory.exportToValuesTable()
-        trackingSpeeds = trackingTrajectory.exportToSpeedsTable()
-        inverseStates = inverseSolution.exportToStatesTable()
+    # Insert the joint coordinate states into the inverse solution
+    # Load the joint coordinate states and solution as a trajectory
+    joint_states = osim.TimeSeriesTable(f'{participant}run{speed}_states.sto')
+    inverse_traj = osim.MocoTrajectory(
+        f'{participant}run{speed}_dynamic_optimisation_{model_type}_solution_mesh-int-{meshIntervalMuscle[-1]}.sto')
+    # Resample inverse solution to match the joint states number of rows
+    inverse_traj.resampleWithNumTimes(joint_states.getNumRows())
+    # Insert joint coordinate values and states
+    joint_traj = osim.StatesTrajectory().createFromStatesTable(opt_model, joint_states, True)
+    inverse_traj.insertStatesTrajectory(joint_states)
 
-        # Loop through values and speeds to append to states
-        for colName in trackingValues.getColumnLabels():
-            inverseStates.appendColumn(colName, trackingValues.getDependentColumn(colName))
-        for colName in trackingSpeeds.getColumnLabels():
-            inverseStates.appendColumn(colName, trackingSpeeds.getDependentColumn(colName))
+    # Write the full states to file
+    inverse_traj.write(f'{participant}run{speed}_dynamic_optimisation_{model_type}_full.sto')
 
-        # Write updated data to file
-        osim.STOFileAdapter().write(inverseStates, f'{participant}{trialName}_{cycleName[-1]}_inverseSolutionStates.sto')
+    # Extract muscle forces from solution
+    output_paths = osim.StdVectorString()
+    output_paths.append('.*tendon_force')
+    output_paths.append('.*fiber_force')
+    muscle_force_table = osim.analyze(opt_model,
+                                      inverse_traj.exportToStatesTable(),
+                                      inverse_traj.exportToControlsTable(),
+                                      output_paths)
+    # Write to file
+    osim.STOFileAdapter().write(muscle_force_table,
+                                f'{participant}run{speed}_dynamic_optimisation_{model_type}_muscle_forces.sto')
 
-        # Extract joint reaction forces from solution
-        jrfTable = osim.analyzeSpatialVec(inverseModel, inverseStates, inverseSolution.exportToControlsTable(),
-                                          ['.*patellofemoral_r.*reaction_on_child']).flatten()
-        osim.STOFileAdapter().write(jrfTable, f'{participant}{trialName}_{cycleName[-1]}_inverseSolution_JRF.sto')
+    # Return to home directory
+    os.chdir(home_dir)
 
-        # Extract muscle forces from solution
-        outputPaths = osim.StdVectorString()
-        outputPaths.append('.*tendon_force')
-        muscleForceTable = osim.analyze(inverseModel, inverseStates, inverseSolution.exportToControlsTable(), outputPaths)
-        osim.STOFileAdapter().write(muscleForceTable, f'{participant}{trialName}_{cycleName[-1]}_inverseSolution_muscleForce.sto')
+    # Print out to console as a bookmark in any log file
+    print(f'{"*" * 10} FINISHED DYNAMIC OPTIMISATION FOR {participant} {speed} WITH {model_type.upper()} MODEL {"*" * 10}')
 
-        # Return to home directory
-        os.chdir(homeDir)
-
-        # Print out to console as a bookmark in any log file
-        # TODO: other logging notes...
-        print(f'***** ----- FINISHED INVERSE SIM FOR CONDITION {participant}{trialName} GAIT CYCLE {cycleName[-1]} ----- *****')
-
-
-
-# ---- OLD CODE PROBABLY NOT NEEDED BELOW HERE... ---- #
-
-# # =========================================================================
-# # Run torque driven coordinate tracking simulations --- MAYBE NOT USE?
-# # =========================================================================
-#
-# """
-#
-# This section runs the torque driven coordinate tracking simulations, with the goal
-# here to generate a dynamically consistent motion for the set of gait cycles which
-# can be tracked with muscle-driven simulations. Inverse kinematics is first run to
-# set the coordinate tracking targets.
-#
-# """
-#
-# # Check for running simulations
-# if runTorqueSim:
-#
-#     # Identify trials for running simulations
-#     # -------------------------------------------------------------------------
-#
-#     # Look up the running trial names that match the speed condition list
-#     trialList = []
-#     for speed in speedList:
-#         if os.path.exists(os.path.join('..', 'data', participant, f'{participant}run{speed}.c3d')):
-#             trialList.append(os.path.join('..', 'data', participant, f'{participant}run{speed}'))
-#
-#     # Set general parameters for simulations
-#     # -------------------------------------------------------------------------
-#
-#     # Set marker tracking weights
-#     markerWeightParams = {
-#         # Pelvis
-#         'R.ASIS': {'weight': 2.5}, 'L.ASIS': {'weight': 2.5}, 'R.PSIS': {'weight': 2.5}, 'L.PSIS': {'weight': 2.5},
-#         'R.Iliac.Crest': {'weight': 0.0}, 'L.Iliac.Crest': {'weight': 0.0},
-#         # Right thigh
-#         'R.GTR': {'weight': 0.0},
-#         'R.Thigh.Top.Lateral': {'weight': 5.0}, 'R.Thigh.Bottom.Lateral': {'weight': 5.0},
-#         'R.Thigh.Top.Medial': {'weight': 5.0}, 'R.Thigh.Bottom.Medial': {'weight': 5.0},
-#         'R.Knee': {'weight': 0.0}, 'R.Knee.Medial': {'weight': 0.0},
-#         # Right shank
-#         'R.HF': {'weight': 0.0}, 'R.TT': {'weight': 0.0},
-#         'R.Shank.Top.Lateral': {'weight': 5.0}, 'R.Shank.Bottom.Lateral': {'weight': 5.0},
-#         'R.Shank.Top.Medial': {'weight': 5.0}, 'R.Shank.Bottom.Medial': {'weight': 5.0},
-#         'R.Ankle': {'weight': 0.0}, 'R.Ankle.Medial': {'weight': 0.0},
-#         # Right foot
-#         'R.Heel.Top': {'weight': 5.0}, 'R.Heel.Bottom': {'weight': 5.0}, 'R.Heel.Lateral': {'weight': 5.0},
-#         'R.MT1': {'weight': 2.5}, 'R.MT2': {'weight': 2.5}, 'R.MT5': {'weight': 2.5},
-#         # Left thigh
-#         'L.GTR': {'weight': 0.0},
-#         'L.Thigh.Top.Lateral': {'weight': 5.0}, 'L.Thigh.Bottom.Lateral': {'weight': 5.0},
-#         'L.Thigh.Top.Medial': {'weight': 5.0}, 'L.Thigh.Bottom.Medial': {'weight': 5.0},
-#         'L.Knee': {'weight': 0.0}, 'L.Knee.Medial': {'weight': 0.0},
-#         # Left shank
-#         'L.HF': {'weight': 0.0}, 'L.TT': {'weight': 0.0},
-#         'L.Shank.Top.Lateral': {'weight': 5.0}, 'L.Shank.Bottom.Lateral': {'weight': 5.0},
-#         'L.Shank.Top.Medial': {'weight': 5.0}, 'L.Shank.Bottom.Medial': {'weight': 5.0},
-#         'L.Ankle': {'weight': 0.0}, 'L.Ankle.Medial': {'weight': 0.0},
-#         # Left foot
-#         'L.Heel.Top': {'weight': 5.0}, 'L.Heel.Bottom': {'weight': 5.0}, 'L.Heel.Lateral': {'weight': 5.0},
-#         'L.MT1': {'weight': 2.5}, 'L.MT2': {'weight': 2.5}, 'L.MT5': {'weight': 2.5},
-#     }
-#
-#     # Set actuator forces to drive simulations
-#     actForces = {'pelvis_tx': {'actuatorType': 'residual', 'optForce': 5},
-#                  'pelvis_ty': {'actuatorType': 'residual', 'optForce': 5},
-#                  'pelvis_tz': {'actuatorType': 'residual', 'optForce': 5},
-#                  'pelvis_tilt': {'actuatorType': 'residual', 'optForce': 2.5},
-#                  'pelvis_list': {'actuatorType': 'residual', 'optForce': 2.5},
-#                  'pelvis_rotation': {'actuatorType': 'residual', 'optForce': 2.5},
-#                  'hip_flexion_r': {'actuatorType': 'torque', 'optForce': 300.0},
-#                  'hip_adduction_r': {'actuatorType': 'torque', 'optForce': 200.0},
-#                  'hip_rotation_r': {'actuatorType': 'torque', 'optForce': 100.0},
-#                  'knee_angle_r': {'actuatorType': 'torque', 'optForce': 300.0},
-#                  'ankle_angle_r': {'actuatorType': 'torque', 'optForce': 200.0},
-#                  'subtalar_angle_r': {'actuatorType': 'torque', 'optForce': 100.0},
-#                  'hip_flexion_l': {'actuatorType': 'torque', 'optForce': 300.0},
-#                  'hip_adduction_l': {'actuatorType': 'torque', 'optForce': 200.0},
-#                  'hip_rotation_l': {'actuatorType': 'torque', 'optForce': 100.0},
-#                  'knee_angle_l': {'actuatorType': 'torque', 'optForce': 300.0},
-#                  'ankle_angle_l': {'actuatorType': 'torque', 'optForce': 200.0},
-#                  'subtalar_angle_l': {'actuatorType': 'torque', 'optForce': 100.0},
-#                  }
-#
-#     # Simulate gait cycles from selected trials
-#     # -------------------------------------------------------------------------
-#
-#     # Loop through trials
-#     for trial in trialList:
-#
-#         # Get generic trial name
-#         trialName = os.path.split(trial)[-1].replace(participant,'')
-#
-#         # Set-up folders and gait timings for trial
-#         # -------------------------------------------------------------------------
-#
-#         # Create the folder for storing trial data
-#         os.makedirs(os.path.join('..', 'simulations', participant, trialName), exist_ok=True)
-#         os.makedirs(os.path.join('..', 'simulations', participant, trialName, 'torque-driven'), exist_ok=True)
-#
-#         # Create the sub-folders for the gait cycles to be simulated
-#         for ii in range(nGaitCycles):
-#             os.makedirs(os.path.join('..', 'simulations', participant, trialName, 'torque-driven', f'cycle_{ii+1}'), exist_ok=True)
-#
-#         # Read in GRF data to identify stance phase timings
-#         trialGRF = osim.TimeSeriesTable(os.path.join('..', 'data', participant, f'{participant}{trialName}_grf.mot'))
-#
-#         # Get vertical ground reaction force for right limb
-#         vGRF = trialGRF.getDependentColumn('ground_force_r_vy').to_numpy()
-#
-#         # Identify contact indices based on force threshold
-#         # Higher force threshold seems to help with noisy-ish COP at ground contact
-#         vertForceThreshold = 100
-#         thresholdCrossings = np.diff(vGRF > vertForceThreshold, prepend=False)
-#         thresholdInd = np.argwhere(thresholdCrossings)[:, 0]
-#
-#         # Sort into pairs
-#         # If the first index is zero it means that the trial started on the plate and this needs to be accounted for
-#         contactPairs = []
-#         if thresholdInd[0] == 0:
-#             for ii in range(0, len(thresholdInd[2::]), 2):
-#                 contactPairs.append(thresholdInd[2::][ii:ii + 2])
-#         else:
-#             for ii in range(0, len(thresholdInd), 2):
-#                 contactPairs.append(thresholdInd[ii:ii + 2])
-#
-#         # Trim last contact pair if only single contact (i.e. contact stayed on plate at end of trial
-#         if len(contactPairs[-1]) == 1:
-#             contactPairs = contactPairs[:-1]
-#
-#         # Re-pair first listed indices to create full gait cycle pairings
-#         gaitCyclePairs = []
-#         for ii in range(len(contactPairs) - 1):
-#             gaitCyclePairs.append((contactPairs[ii][0], contactPairs[ii + 1][0]))
-#
-#         # Randomly sample the desired number of cycles from the contact pairs
-#         random.seed(int(''.join(ii for ii in participant if ii.isdigit())) + int(''.join(ii for ii in trialName if ii.isdigit())))
-#         selectCycles = random.sample(gaitCyclePairs, nGaitCycles)
-#
-#         # Identify timings of selected cycles
-#         gaitTimings = [(trialGRF.getIndependentColumn()[selectCycles[ii][0]],
-#                         trialGRF.getIndependentColumn()[selectCycles[ii][1]]) for ii in range(nGaitCycles)]
-#
-#         # Run simulations of each gait cycle
-#         # -------------------------------------------------------------------------
-#
-#         # Loop through gait cycles
-#         for ii in range(nGaitCycles):
-#
-#             # Set-up files for simulation
-#             # -------------------------------------------------------------------------
-#
-#             # Navigate to simulation folder for ease of use
-#             homeDir = os.getcwd()
-#             os.chdir(os.path.join('..', 'simulations', participant, trialName, 'torque-driven', f'cycle_{ii+1}'))
-#
-#             # Copy external loads file to simulation directory
-#             shutil.copyfile(os.path.join('..', '..', '..', '..', '..', 'data', participant, f'{participant}{trialName}_grf.mot'),
-#                             f'{participant}{trialName}_grf.mot')
-#             shutil.copyfile(os.path.join('..', '..', '..', '..', '..', 'data', participant, f'{participant}{trialName}_grf.xml'),
-#                             f'{participant}{trialName}_grf.xml')
-#
-#             # Copy marker file to simulation directory
-#             shutil.copyfile(os.path.join('..', '..', '..', '..', '..', 'data', participant, f'{participant}{trialName}.trc'),
-#                             f'{participant}{trialName}.trc')
-#
-#             # Run inverse kinematics to get tracking coordinates
-#             # -------------------------------------------------------------------------
-#
-#             # Create IK tool
-#             ikTool = osim.InverseKinematicsTool()
-#
-#             # Set to report marker locations in tool
-#             ikTool.set_report_marker_locations(True)
-#
-#             # Set tasks in IK tool
-#             for markerName in markerWeightParams.keys():
-#                 if markerWeightParams[markerName]['weight'] != 0:
-#                     task = osim.IKMarkerTask()
-#                     task.setName(markerName)
-#                     task.setWeight(markerWeightParams[markerName]['weight'])
-#                     ikTool.getIKTaskSet().cloneAndAppend(task)
-#
-#             # Set the model to use in IK
-#             ikTool.set_model_file(os.path.join('..', '..', '..', 'scaling', f'{participant}_scaledModelAdjusted.osim'))
-#
-#             # Set marker file
-#             ikTool.setMarkerDataFileName(f'{participant}{trialName}.trc')
-#
-#             # Set times to start and end of marker file
-#             ikTool.setStartTime(gaitTimings[ii][0])
-#             ikTool.setEndTime(gaitTimings[ii][1])
-#
-#             # Set output file
-#             ikTool.setOutputMotionFileName(f'{participant}{trialName}_ik.mot')
-#
-#             # Save IK file to base directory to bring back in and run
-#             ikTool.printToXML(f'{participant}{trialName}_ikSetup.xml')
-#
-#             # Bring the tool back in and run standard IK (this seems to avoid Python kernel crashing)
-#             ikRun = osim.InverseKinematicsTool(f'{participant}{trialName}_ikSetup.xml')
-#             ikRun.run()
-#
-#             # Rename marker error and location files
-#             shutil.move('_ik_marker_errors.sto', f'{participant}{trialName}_ikMarkerErrors.sto')
-#             shutil.move('_ik_model_marker_locations.sto', f'{participant}{trialName}_ikModelMarkerLocations.sto')
-#
-#             # Clean up kinematic data for tracking
-#             # -------------------------------------------------------------------------
-#
-#             # Load in the kinematic data
-#             kinematicsStorage = osim.Storage(f'{participant}{trialName}_ik.mot')
-#
-#             # Create a copy of the kinematics data to alter the column labels in
-#             statesStorage = osim.Storage(f'{participant}{trialName}_ik.mot')
-#
-#             # Filter both storage objects
-#             # Note that this resamples time stamps so eliminates the need to do so
-#             kinematicsStorage.lowpassFIR(4, kinematicFiltFreq)
-#             statesStorage.lowpassFIR(4, kinematicFiltFreq)
-#
-#             # Get the column headers for the storage file
-#             angleNames = kinematicsStorage.getColumnLabels()
-#
-#             # Get the corresponding full paths from the model to rename the
-#             # angles in the kinematics file
-#             kinematicModel = osim.Model(os.path.join('..', '..', '..', 'scaling', f'{participant}_scaledModelAdjusted.osim'))
-#             for angNo in range(angleNames.getSize()):
-#                 currAngle = angleNames.get(angNo)
-#                 if currAngle != 'time':
-#                     # Try getting the full path to coordinate
-#                     # This may fail due to their being marker data included in these files
-#                     try:
-#                         # Loo for full coordinate path
-#                         fullPath = kinematicModel.updCoordinateSet().get(currAngle).getAbsolutePathString() + '/value'
-#                         # Set angle name appropriately using full path
-#                         angleNames.set(angNo, fullPath)
-#                     except:
-#                         # Print out that current column isn't a coordinate
-#                         print(f'{currAngle} not a coordinate...skipping name conversion...')
-#                         # Set to the same as originaly
-#                         angleNames.set(angNo, currAngle)
-#
-#             # Set the states storage object to have the updated column labels
-#             statesStorage.setColumnLabels(angleNames)
-#
-#             # Convert from IK default of degrees to radians
-#             kinematicModel.initSystem()
-#             kinematicModel.getSimbodyEngine().convertDegreesToRadians(statesStorage)
-#
-#             # Write the states storage object to file
-#             statesStorage.printToXML(f'{participant}{trialName}_coordinates.sto')
-#
-#             # Set up model for tracking simulation
-#             # -------------------------------------------------------------------------
-#
-#             # Construct a model processor to use with the tool
-#             modelProc = osim.ModelProcessor(os.path.join('..', '..', '..', 'scaling', f'{participant}_scaledModelAdjusted.osim'))
-#
-#             # Append external loads
-#             modelProc.append(osim.ModOpAddExternalLoads(f'{participant}{trialName}_grf.xml'))
-#
-#             # Weld desired locked joints
-#             # Create vector string object
-#             weldVectorStr = osim.StdVectorString()
-#             [weldVectorStr.append(joint) for joint in ['mtp_r', 'mtp_l']]
-#             # Append to model processor
-#             modelProc.append(osim.ModOpReplaceJointsWithWelds(weldVectorStr))
-#
-#             # Remove muscles from model
-#             modelProc.append(osim.ModOpRemoveMuscles())
-#
-#             # Process model for further edits
-#             trackingModel = modelProc.process()
-#
-#             # Add coordinate actuators to model
-#             for coordinate in actForces:
-#                 # Create actuator
-#                 actu = osim.CoordinateActuator()
-#                 # Set name
-#                 actu.setName(f'{coordinate}_{actForces[coordinate]["actuatorType"]}')
-#                 # Set coordinate
-#                 actu.setCoordinate(trackingModel.updCoordinateSet().get(coordinate))
-#                 # Set optimal force
-#                 actu.setOptimalForce(actForces[coordinate]['optForce'])
-#                 # Set min and max control
-#                 actu.setMinControl(np.inf * -1)
-#                 actu.setMaxControl(np.inf * 1)
-#                 # Append to model force set
-#                 trackingModel.updForceSet().cloneAndAppend(actu)
-#
-#             # Finalise model connections
-#             trackingModel.finalizeConnections()
-#
-#             # Print model to file in tracking directory
-#             trackingModel.printToXML(f'{participant}{trialName}_{ii+1}_torque-driven_model.osim')
-#
-#             # Set up tracking simulation
-#             # -------------------------------------------------------------------------
-#
-#             # Create tracking tool
-#             track = osim.MocoTrack()
-#             track.setName(f'{participant}{trialName}_{ii+1}_torque-driven')
-#
-#             # Set model
-#             trackModelProc = osim.ModelProcessor(f'{participant}{trialName}_{ii+1}_torque-driven_model.osim')
-#             track.setModel(trackModelProc)
-#
-#             # Set the coordinates reference file
-#             tableProcessor = osim.TableProcessor(f'{participant}{trialName}_coordinates.sto')
-#             track.setStatesReference(tableProcessor)
-#
-#             # Set to ignore unused columns
-#             track.set_allow_unused_references(True)
-#
-#             # Set global markers tracking weight
-#             track.set_states_global_tracking_weight(globalCoordinateTrackingWeight)
-#
-#             # Track positive derivaties (i.e. speeds)
-#             track.set_track_reference_position_derivatives(True)
-#
-#             # Set tracked states to guess
-#             track.set_apply_tracked_states_to_guess(True)
-#
-#             # Set the timings
-#             # Slightly different due to potential re-sampling of time-stamps
-#             track.set_initial_time(osim.TimeSeriesTable(f'{participant}{trialName}_coordinates.sto').getIndependentColumn()[0])
-#             track.set_final_time(osim.TimeSeriesTable(f'{participant}{trialName}_coordinates.sto').getIndependentColumn()[-1])
-#             track.set_mesh_interval(meshIntervalStep)
-#
-#             # Initialise to a Moco study and problem to finalise
-#             # -------------------------------------------------------------------------
-#
-#             # Get study and problem
-#             study = track.initialize()
-#             problem = study.updProblem()
-#
-#             # Update control effort goal
-#             # -------------------------------------------------------------------------
-#
-#             # Get a reference to the MocoControlCost goal and set parameters
-#             effort = osim.MocoControlGoal.safeDownCast(problem.updGoal('control_effort'))
-#             effort.setWeight(globalTorqueControlEffortGoal)
-#             effort.setExponent(2)
-#
-#             # Update individual weights in control effort goal
-#             # Put higher weight on residual use
-#             # TODO: higher residual weight?
-#             effort.setWeightForControlPattern('/forceset/.*_residual', 5.0)
-#             # Put heavy weight on the reserve actuators
-#             effort.setWeightForControlPattern('/forceset/.*_torque', 1.0)
-#
-#             # Update states tracking goal
-#             # -------------------------------------------------------------------------
-#
-#             # Get a reference to the states tracking goal
-#             tracking = osim.MocoStateTrackingGoal.safeDownCast(problem.updGoal('state_tracking'))
-#             tracking.setScaleWeightsWithRange(True)
-#
-#             # Define and configure the solver
-#             # -------------------------------------------------------------------------
-#             solver = osim.MocoCasADiSolver.safeDownCast(study.updSolver())
-#
-#             # Set solver options
-#             solver.set_optim_max_iterations(1000)
-#             # solver.set_num_mesh_intervals(meshIntervalTorque)
-#             solver.set_optim_constraint_tolerance(1e-3)
-#             solver.set_optim_convergence_tolerance(1e-3)
-#             solver.resetProblem(problem)
-#
-#             # Solve the problem
-#             # -------------------------------------------------------------------------
-#             trackingSolution = study.solve()
-#
-#             # # Option to visualise solution
-#             # study.visualize(trackingSolution)
-#
-#             # Save files and finalize
-#             # -------------------------------------------------------------------------
-#
-#             # Write solution to file
-#             if trackingSolution.isSealed():
-#                 trackingSolution.unseal()
-#             trackingSolution.write(f'{participant}{trialName}_{ii+1}_torque-driven_coordinate-solution.sto')
-#
-#             # Remove initial tracked states and markers file
-#             os.remove(f'{participant}{trialName}_{ii+1}_torque-driven_tracked_states.sto')
-#
-#             # # Extract joint reaction forces from solution
-#             # jrfTable = osim.analyzeMocoTrajectorySpatialVec(trackingModel, trackingSolution,
-#             #                                                 ['.*patellofemoral_r.*reaction_on_child']).flatten()
-#             # osim.STOFileAdapter().write(jrfTable, f'{participant}{trialName}_{ii+1}_trackingSolution_JRF.sto')
-#             #
-#             # # Extract muscle forces from solution
-#             # outputPaths = osim.StdVectorString()
-#             # outputPaths.append('.*tendon_force')
-#             # muscleForceTable = osim.analyzeMocoTrajectory(trackingModel, trackingSolution, outputPaths)
-#             # osim.STOFileAdapter().write(muscleForceTable, f'{participant}{trialName}_{ii+1}_trackingSolution_muscleForce.sto')
-#
-#             # Return to home directory
-#             os.chdir(homeDir)
-#
-#             # Print out to console as a bookmark in any log file
-#             # TODO: other logging notes...
-#             print(f'***** ----- FINISHED TORQUE TRACKING SIM FOR PARTICIPANT {participant} {trialName} GAIT CYCLE {ii+1} ----- *****')
-#
-# # =========================================================================
-# # Run tracking simulations - MODIFYING WITH EARLIER CODE...
-# # =========================================================================
-#
-# # Check for running simulations
-# if runSimulations:
-#
-#     # Identify trials for running simulations
-#     # -------------------------------------------------------------------------
-#
-#     # Look up the running trial names that match the speed condition list
-#     trialList = []
-#     for speed in speedList:
-#         if os.path.exists(os.path.join('..', 'data', participant, f'{participant}run{speed}.c3d')):
-#             trialList.append(os.path.join('..', 'data', participant, f'{participant}run{speed}'))
-#
-#     # Set general parameters for simulations
-#     # -------------------------------------------------------------------------
-#
-#     # Set marker tracking weights
-#     markerWeightParams = {
-#         # Pelvis
-#         'R.ASIS': {'weight': 10.0}, 'L.ASIS': {'weight': 10.0}, 'R.PSIS': {'weight': 10.0}, 'L.PSIS': {'weight': 10.0},
-#         'R.Iliac.Crest': {'weight': 2.5}, 'L.Iliac.Crest': {'weight': 2.5},
-#         # Right thigh
-#         'R.GTR': {'weight': 0.0},
-#         'R.Thigh.Top.Lateral': {'weight': 5.0}, 'R.Thigh.Bottom.Lateral': {'weight': 5.0},
-#         'R.Thigh.Top.Medial': {'weight': 5.0}, 'R.Thigh.Bottom.Medial': {'weight': 5.0},
-#         'R.Knee': {'weight': 0.0}, 'R.Knee.Medial': {'weight': 0.0},
-#         # Right shank
-#         'R.HF': {'weight': 0.0}, 'R.TT': {'weight': 0.0},
-#         'R.Shank.Top.Lateral': {'weight': 5.0}, 'R.Shank.Bottom.Lateral': {'weight': 5.0},
-#         'R.Shank.Top.Medial': {'weight': 5.0}, 'R.Shank.Bottom.Medial': {'weight': 5.0},
-#         'R.Ankle': {'weight': 0.0}, 'R.Ankle.Medial': {'weight': 0.0},
-#         # Right foot
-#         'R.Heel.Top': {'weight': 10.0}, 'R.Heel.Bottom': {'weight': 10.0}, 'R.Heel.Lateral': {'weight': 10.0},
-#         'R.MT1': {'weight': 5.0}, 'R.MT2': {'weight': 0.0}, 'R.MT5': {'weight': 5.0},
-#         # Left thigh
-#         'L.GTR': {'weight': 0.0},
-#         'L.Thigh.Top.Lateral': {'weight': 5.0}, 'L.Thigh.Bottom.Lateral': {'weight': 5.0},
-#         'L.Thigh.Top.Medial': {'weight': 5.0}, 'L.Thigh.Bottom.Medial': {'weight': 5.0},
-#         'L.Knee': {'weight': 0.0}, 'L.Knee.Medial': {'weight': 0.0},
-#         # Left shank
-#         'L.HF': {'weight': 0.0}, 'L.TT': {'weight': 0.0},
-#         'L.Shank.Top.Lateral': {'weight': 5.0}, 'L.Shank.Bottom.Lateral': {'weight': 5.0},
-#         'L.Shank.Top.Medial': {'weight': 5.0}, 'L.Shank.Bottom.Medial': {'weight': 5.0},
-#         'L.Ankle': {'weight': 0.0}, 'L.Ankle.Medial': {'weight': 0.0},
-#         # Left foot
-#         'L.Heel.Top': {'weight': 10.0}, 'L.Heel.Bottom': {'weight': 10.0}, 'L.Heel.Lateral': {'weight': 10.0},
-#         'L.MT1': {'weight': 5.0}, 'L.MT2': {'weight': 0.0}, 'L.MT5': {'weight': 0.0},
-#     }
-#
-#     # Set actuator forces to include alongside muscles
-#     actForces = {'pelvis_tx': {'actuatorType': 'residual', 'optForce': 5},
-#                  'pelvis_ty': {'actuatorType': 'residual', 'optForce': 5},
-#                  'pelvis_tz': {'actuatorType': 'residual', 'optForce': 5},
-#                  'pelvis_tilt': {'actuatorType': 'residual', 'optForce': 2.5},
-#                  'pelvis_list': {'actuatorType': 'residual', 'optForce': 2.5},
-#                  'pelvis_rotation': {'actuatorType': 'residual', 'optForce': 2.5},
-#                  'hip_flexion_r': {'actuatorType': 'reserve', 'optForce': 2.5},
-#                  'hip_adduction_r': {'actuatorType': 'reserve', 'optForce': 1.0},
-#                  'hip_rotation_r': {'actuatorType': 'reserve', 'optForce': 1.0},
-#                  'knee_angle_r': {'actuatorType': 'reserve', 'optForce': 2.5},
-#                  'ankle_angle_r': {'actuatorType': 'reserve', 'optForce': 2.5},
-#                  'subtalar_angle_r': {'actuatorType': 'reserve', 'optForce': 1.0},
-#                  'hip_flexion_l': {'actuatorType': 'reserve', 'optForce': 2.5},
-#                  'hip_adduction_l': {'actuatorType': 'reserve', 'optForce': 1.0},
-#                  'hip_rotation_l': {'actuatorType': 'reserve', 'optForce': 1.0},
-#                  'knee_angle_l': {'actuatorType': 'reserve', 'optForce': 2.5},
-#                  'ankle_angle_l': {'actuatorType': 'reserve', 'optForce': 2.5},
-#                  'subtalar_angle_l': {'actuatorType': 'reserve', 'optForce': 1.0},
-#                  }
-#
-#     # Simulate gait cycles from selected trials
-#     # -------------------------------------------------------------------------
-#
-#     # Loop through trials
-#     for trial in trialList:
-#
-#         # Get generic trial name
-#         trialName = os.path.split(trial)[-1].replace(participant,'')
-#
-#         # Set-up folders and gait timings for trial
-#         # -------------------------------------------------------------------------
-#
-#         # Create the folder for storing trial data
-#         os.makedirs(os.path.join('..', 'simulations', participant, trialName), exist_ok=True)
-#
-#         # Create the sub-folders for the gait cycles to be simulated
-#         for ii in range(nGaitCycles):
-#             os.makedirs(os.path.join('..', 'simulations', participant, trialName, f'cycle_{ii+1}'), exist_ok=True)
-#
-#         # Read in GRF data to identify stance phase timings
-#         trialGRF = osim.TimeSeriesTable(os.path.join('..', 'data', participant, f'{participant}{trialName}_grf.mot'))
-#
-#         # Get vertical ground reaction force for right limb
-#         vGRF = trialGRF.getDependentColumn('ground_force_r_vy').to_numpy()
-#
-#         # Identify contact indices based on force threshold
-#         vertForceThreshold = 50
-#         thresholdCrossings = np.diff(vGRF > vertForceThreshold, prepend=False)
-#         thresholdInd = np.argwhere(thresholdCrossings)[:, 0]
-#
-#         # Sort into pairs
-#         # If the first index is zero it means that the trial started on the plate and this needs to be accounted for
-#         contactPairs = []
-#         if thresholdInd[0] == 0:
-#             for ii in range(0, len(thresholdInd[2::]), 2):
-#                 contactPairs.append(thresholdInd[2::][ii:ii + 2])
-#         else:
-#             for ii in range(0, len(thresholdInd), 2):
-#                 contactPairs.append(thresholdInd[ii:ii + 2])
-#
-#         # Trim last contact pair if only single contact (i.e. contact stayed on plate at end of trial
-#         if len(contactPairs[-1]) == 1:
-#             contactPairs = contactPairs[:-1]
-#
-#         # Re-pair first listed indices to create full gait cycle pairings
-#         gaitCyclePairs = []
-#         for ii in range(len(contactPairs) - 1):
-#             gaitCyclePairs.append((contactPairs[ii][0], contactPairs[ii + 1][0]))
-#
-#         # Randomly sample the desired number of cycles from the contact pairs
-#         random.seed(int(''.join(ii for ii in participant if ii.isdigit())) + int(''.join(ii for ii in trialName if ii.isdigit())))
-#         selectCycles = random.sample(gaitCyclePairs, nGaitCycles)
-#
-#         # Identify timings of selected cycles
-#         gaitTimings = [(trialGRF.getIndependentColumn()[selectCycles[ii][0]],
-#                         trialGRF.getIndependentColumn()[selectCycles[ii][1]]) for ii in range(nGaitCycles)]
-#
-#         # Run simulations of each gait cycle
-#         # -------------------------------------------------------------------------
-#
-#         # Loop through gait cycles
-#         for ii in range(nGaitCycles):
-#
-#             # Set-up files for simulation
-#             # -------------------------------------------------------------------------
-#
-#             # Navigate to simulation folder for ease of use
-#             homeDir = os.getcwd()
-#             os.chdir(os.path.join('..', 'simulations', participant, trialName, f'cycle_{ii+1}'))
-#
-#             # Copy external loads file to simulation directory
-#             shutil.copyfile(os.path.join('..', '..', '..', '..', 'data', participant, f'{participant}{trialName}_grf.mot'),
-#                             f'{participant}{trialName}_grf.mot')
-#             shutil.copyfile(os.path.join('..', '..', '..', '..', 'data', participant, f'{participant}{trialName}_grf.xml'),
-#                             f'{participant}{trialName}_grf.xml')
-#
-#             # Copy marker file to simulation directory
-#             shutil.copyfile(os.path.join('..', '..', '..', '..', 'data', participant, f'{participant}{trialName}.trc'),
-#                             f'{participant}{trialName}.trc')
-#
-#             # Set up model for tracking simulation
-#             # -------------------------------------------------------------------------
-#
-#             # Construct a model processor to use with the tool
-#             modelProc = osim.ModelProcessor(os.path.join('..', '..', 'scaling', f'{participant}_scaledModelAdjusted.osim'))
-#
-#             # Append external loads
-#             modelProc.append(osim.ModOpAddExternalLoads(f'{participant}{trialName}_grf.xml'))
-#
-#             # Weld desired locked joints
-#             # Create vector string object
-#             weldVectorStr = osim.StdVectorString()
-#             [weldVectorStr.append(joint) for joint in ['mtp_r', 'mtp_l']]
-#             # Append to model processor
-#             modelProc.append(osim.ModOpReplaceJointsWithWelds(weldVectorStr))
-#
-#             # Convert muscles to DeGrooteFregley model
-#             modelProc.append(osim.ModOpReplaceMusclesWithDeGrooteFregly2016())
-#
-#             # Increase muscle isometric force by a scaling factor to deal with potentially higher muscle forces
-#             modelProc.append(osim.ModOpScaleMaxIsometricForce(1.5))
-#
-#             # Set to ignore tendon compliance
-#             modelProc.append(osim.ModOpIgnoreTendonCompliance())
-#
-#             # Ignore passive fibre forces
-#             modelProc.append(osim.ModOpIgnorePassiveFiberForcesDGF())
-#
-#             # Scale active force curve width
-#             modelProc.append(osim.ModOpScaleActiveFiberForceCurveWidthDGF(1.5))
-#
-#             # Process model for further edits
-#             trackingModel = modelProc.process()
-#
-#             # Add coordinate actuators to model
-#             for coordinate in actForces:
-#                 # Create actuator
-#                 actu = osim.CoordinateActuator()
-#                 # Set name
-#                 actu.setName(f'{coordinate}_{actForces[coordinate]["actuatorType"]}')
-#                 # Set coordinate
-#                 actu.setCoordinate(trackingModel.updCoordinateSet().get(coordinate))
-#                 # Set optimal force
-#                 actu.setOptimalForce(actForces[coordinate]['optForce'])
-#                 # Set min and max control
-#                 actu.setMinControl(np.inf * -1)
-#                 actu.setMaxControl(np.inf * 1)
-#                 # Append to model force set
-#                 trackingModel.updForceSet().cloneAndAppend(actu)
-#
-#             # Finalise model connections
-#             trackingModel.finalizeConnections()
-#
-#             # Print model to file in tracking directory
-#             trackingModel.printToXML(f'{participant}{trialName}_{ii+1}_trackingModel.osim')
-#
-#             # Set up tracking simulation
-#             # -------------------------------------------------------------------------
-#
-#             # Create tracking tool
-#             track = osim.MocoTrack()
-#             track.setName(f'{participant}{trialName}_{ii+1}')
-#
-#             # Set model
-#             trackModelProc = osim.ModelProcessor(f'{participant}{trialName}_{ii+1}_trackingModel.osim')
-#             track.setModel(trackModelProc)
-#
-#             # Set the marker reference file
-#             track.setMarkersReferenceFromTRC(f'{participant}{trialName}.trc')
-#
-#             # Set to ignore unused markers
-#             track.set_allow_unused_references(True)
-#
-#             # Set global markers tracking weight
-#             track.set_markers_global_tracking_weight(globalMarkerTrackingWeight)
-#
-#             # Set individual marker weights
-#             markerWeights = osim.MocoWeightSet()
-#             for marker in markerWeightParams.keys():
-#                 if markerWeightParams[marker]['weight'] != 0:
-#                     markerWeights.cloneAndAppend(osim.MocoWeight(marker, markerWeightParams[marker]['weight']))
-#             track.set_markers_weight_set(markerWeights)
-#
-#             # Set the timings
-#             track.set_initial_time(gaitTimings[ii][0])
-#             track.set_final_time(gaitTimings[ii][1])
-#             # track.set_mesh_interval(meshIntervalStep)
-#
-#             # Initialise to a Moco study and problem to finalise
-#             # -------------------------------------------------------------------------
-#
-#             # Get study and problem
-#             study = track.initialize()
-#             problem = study.updProblem()
-#
-#             # Update control effort goal
-#             # -------------------------------------------------------------------------
-#
-#             # Get a reference to the MocoControlCost goal and set parameters
-#             effort = osim.MocoControlGoal.safeDownCast(problem.updGoal('control_effort'))
-#             effort.setWeight(globalControlEffortGoal)
-#             effort.setExponent(2)
-#
-#             # Update individual weights in control effort goal
-#             # Put higher weight on residual use
-#             effort.setWeightForControlPattern('/forceset/.*_residual', 2.5)
-#             # Put heavy weight on the reserve actuators
-#             effort.setWeightForControlPattern('/forceset/.*_reserve', 5.0)
-#
-#             # Option to update marker tracking goal
-#             # -------------------------------------------------------------------------
-#
-#             # TODO: enforce in a constraint manner so markers remain within threshold?
-#
-#             # # Get a reference to the marker tracking goal
-#             # tracking = osim.MocoMarkerTrackingGoal.safeDownCast(problem.updGoal('marker_tracking'))
-#
-#             # Define and configure the solver
-#             # -------------------------------------------------------------------------
-#             solver = osim.MocoCasADiSolver.safeDownCast(study.updSolver())
-#
-#             # Set solver options
-#             # TODO: set mesh interval using variable
-#             solver.set_optim_max_iterations(1000)
-#             solver.set_num_mesh_intervals(meshInterval)
-#             solver.set_optim_constraint_tolerance(1e-2)
-#             solver.set_optim_convergence_tolerance(1e-3)
-#             solver.resetProblem(problem)
-#
-#             # Solve the problem
-#             # -------------------------------------------------------------------------
-#             trackingSolution = study.solve()
-#
-#             # # Option to visualise solution
-#             # study.visualize(trackingSolution)
-#
-#             # Save files and finalize
-#             # -------------------------------------------------------------------------
-#
-#             # Write solution to file
-#             if trackingSolution.isSealed():
-#                 trackingSolution.unseal()
-#             trackingSolution.write(f'{participant}{trialName}_{ii+1}_trackingSolution.sto')
-#
-#             # Remove initial tracked states and markers file
-#             os.remove(f'{participant}{trialName}_{ii+1}_tracked_markers.sto')
-#
-#             # Extract joint reaction forces from solution
-#             jrfTable = osim.analyzeMocoTrajectorySpatialVec(trackingModel, trackingSolution,
-#                                                             ['.*patellofemoral_r.*reaction_on_child']).flatten()
-#             osim.STOFileAdapter().write(jrfTable, f'{participant}{trialName}_{ii+1}_trackingSolution_JRF.sto')
-#
-#             # Extract muscle forces from solution
-#             outputPaths = osim.StdVectorString()
-#             outputPaths.append('.*tendon_force')
-#             muscleForceTable = osim.analyzeMocoTrajectory(trackingModel, trackingSolution, outputPaths)
-#             osim.STOFileAdapter().write(muscleForceTable, f'{participant}{trialName}_{ii+1}_trackingSolution_muscleForce.sto')
-#
-#             # Return to home directory
-#             os.chdir(homeDir)
-#
-#             # Print out to console as a bookmark in any log file
-#             # TODO: other logging notes...
-#             print(f'***** ----- FINISHED TRACKING SIM FOR CONDITION {participant}{trialName} STANCE PHASE {ii+1} ----- *****')
 
 # =========================================================================
-# Finalise and exit
+# Run simulations
 # =========================================================================
 
-# Exit console to avoid exit code error
-os._exit(00)
+if __name__ == '__main__':
 
-# %% ---------- end of runSimulations.py ---------- %% #
+    # TODO: simple model? Not working great in dynamic optimisation
+
+    # Run marker tracking simulation
+    # -------------------------------------------------------------------------
+    if runTorqueSim:
+        run_marker_tracking()
+
+    # Run static optimisation
+    # -------------------------------------------------------------------------
+    if runStaticOpt:
+        run_static_optimisation('complex')
+
+    # Run dynamic optimisation
+    # -------------------------------------------------------------------------
+    if runDynamicOpt:
+        run_dynamic_optimisation('complex')
+
+    # Exit terminal to avoid any funny business
+    # -------------------------------------------------------------------------
+    os._exit(00)
+
+# %% ---------- end of run_simulations.py ---------- %% #
