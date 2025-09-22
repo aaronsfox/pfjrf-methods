@@ -13,25 +13,14 @@
     patellofemoral joint reaction forces with different modelling approaches.
 
     TODO:
-        > Fix up argparser support so this can be run on HPC
         > Simple model in dynamic optimisation has some weird results...
             >> High muscle forces, negative plantarflexor muscle forces...
             >> Is this due to damping/passive?
                 >> See: https://simtk.org/plugins/phpBB/viewtopicPhpbb.php?f=1815&t=11584&p=32430&start=0&view=
+                >> Doesn't seem to be --- muscles just don't seem to do anything?
         > Tendon dynamics included?
             >> Need to test if works
             >> Never works well with inverse...
-        > Sort out initial guess approach
-            >> Generic guess from good participant ta each speed?
-            >> Using a good initial guess even from a different speed seems like a good idea (e.g. RBDS03)
-            >> General initial guess from different participant actually had more iterations...
-                >> Does T25 from specific participant help?
-                    >> Doesn't make any real difference
-            >> Mesh refinement?
-                >> Doesn't make a huge difference in total objective function, but seems to speed up denser optimisations with smoother activations
-                >> Perhaps could use this to work up to a mesh interval of 50 with a bit more speed?
-                >> Use a good consistent general initial guess on all participants from a good MR strategy?
-                >> LOOKS LIKE GOOD OVERALL STRATEGY!
 
 """
 
@@ -56,13 +45,14 @@ import time
 # =========================================================================
 
 # Set participant ID to run
-participant = 'RBDS001'
-speed = 'T35'
-# parser = argparse.ArgumentParser()
-# parser.add_argument('-p', '--participant', action = 'store', type = str, help = 'Enter the participant ID')
-# parser.add_argument('-s', '--speed', action = 'store', type = str, help = 'Enter the speed label (T25, T35, T45)')
-# args = parser.parse_args()
-# participant = args.participant
+# participant = 'RBDS001'
+# speed = 'T35'
+parser = argparse.ArgumentParser()
+parser.add_argument('-p', '--participant', action = 'store', type = str, help = 'Enter the participant ID')
+parser.add_argument('-s', '--speed', action = 'store', type = str, help = 'Enter the speed label (T25, T35, T45)')
+args = parser.parse_args()
+participant = args.participant
+speed = args.speed
 
 # Settings for running specific sections of code
 runTorqueSim = True
@@ -108,8 +98,8 @@ os.makedirs(os.path.join('..','simulations',participant,speed), exist_ok=True)
 # Set matplotlib parameters
 from matplotlib import rcParams
 import matplotlib
-matplotlib.use('TkAgg')
-plt.ion()
+# matplotlib.use('TkAgg')
+# plt.ion()
 
 # rcParams['font.family'] = 'sans-serif'
 rcParams['font.sans-serif'] = 'Arial'
