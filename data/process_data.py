@@ -11,9 +11,6 @@
     This script runs some initial processing steps to prepare the Fukuchi2017
     dataset for the subsequent simulations.
 
-    TODO:
-        > Muscle paths don't fit that well with polynomials...probably not great to use
-
 """
 
 # =========================================================================
@@ -34,7 +31,7 @@ import shutil
 # Set which processing steps to run
 runScaling = True
 runIK = True
-runMusclePathTool = False  # TODO: might not use...
+runMusclePathTool = False  # TODO: unlikely to use due to poor fitting
 
 # =========================================================================
 # Set-up

@@ -4,7 +4,7 @@
 		<!--Name/path to the xml .osim file.-->
 		<model_file>RBDS002\scaling\RBDS002_complex.osim</model_file>
 		<!--The time range for the study.-->
-		<time_range>11.044 18.827000000000002</time_range>
+		<time_range>11.058 18.838000000000001</time_range>
 		<!--Name of the resulting inverse kinematics motion (.mot) file.-->
 		<output_motion_file>RBDS002\ik\T35\RBDS002_T35_ik_complex.mot</output_motion_file>
 		<!--Markers and coordinates to be considered (tasks) and their weightings. The sum of weighted-squared task errors composes the cost function.-->
