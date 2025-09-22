@@ -4,7 +4,7 @@
 		<!--Name/path to the xml .osim file.-->
 		<model_file>RBDS001\scaling\RBDS001_complex.osim</model_file>
 		<!--The time range for the study.-->
-		<time_range>11.702 18.256</time_range>
+		<time_range>11.705 18.260999999999999</time_range>
 		<!--Name of the resulting inverse kinematics motion (.mot) file.-->
 		<output_motion_file>RBDS001\ik\T45\RBDS001_T45_ik_complex.mot</output_motion_file>
 		<!--Markers and coordinates to be considered (tasks) and their weightings. The sum of weighted-squared task errors composes the cost function.-->
@@ -12,27 +12,27 @@
 			<objects>
 				<IKMarkerTask name="R.ASIS">
 					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
-					<weight>2.5</weight>
+					<weight>5</weight>
 				</IKMarkerTask>
 				<IKMarkerTask name="L.ASIS">
 					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
-					<weight>2.5</weight>
+					<weight>5</weight>
 				</IKMarkerTask>
 				<IKMarkerTask name="R.PSIS">
 					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
-					<weight>2.5</weight>
+					<weight>5</weight>
 				</IKMarkerTask>
 				<IKMarkerTask name="L.PSIS">
 					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
-					<weight>2.5</weight>
+					<weight>5</weight>
 				</IKMarkerTask>
 				<IKMarkerTask name="R.Iliac.Crest">
 					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
-					<weight>1</weight>
+					<weight>2.5</weight>
 				</IKMarkerTask>
 				<IKMarkerTask name="L.Iliac.Crest">
 					<!--Weight given to the task when solving inverse kinematics problems, default is 0.-->
-					<weight>1</weight>
+					<weight>2.5</weight>
 				</IKMarkerTask>
 				<IKMarkerTask name="R.GTR">
 					<!--Whether or not this task will be used during inverse kinematics solve, default is true.-->

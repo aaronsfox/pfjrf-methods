@@ -1456,7 +1456,7 @@
 						<!--Default appearance attributes for this AbstractGeometryPath.-->
 						<Appearance>
 							<!--The color, (red, green, blue), [0, 1], used to display the geometry. -->
-							<color>0.80000000000000004 0.10000000000000001 0.10000000000000001</color>
+							<color>0.94117647058823528 0.31372549019607843 0.22352941176470589</color>
 						</Appearance>
 						<!--The set of points defining the path-->
 						<PathPointSet>
@@ -1524,7 +1524,7 @@
 						<!--Default appearance attributes for this AbstractGeometryPath.-->
 						<Appearance>
 							<!--The color, (red, green, blue), [0, 1], used to display the geometry. -->
-							<color>0.80000000000000004 0.10000000000000001 0.10000000000000001</color>
+							<color>0.94117647058823528 0.31372549019607843 0.22352941176470589</color>
 						</Appearance>
 						<!--The set of points defining the path-->
 						<PathPointSet>
@@ -1592,7 +1592,7 @@
 						<!--Default appearance attributes for this AbstractGeometryPath.-->
 						<Appearance>
 							<!--The color, (red, green, blue), [0, 1], used to display the geometry. -->
-							<color>0.80000000000000004 0.10000000000000001 0.10000000000000001</color>
+							<color>0.94117647058823528 0.31372549019607843 0.22352941176470589</color>
 						</Appearance>
 						<!--The set of points defining the path-->
 						<PathPointSet>
@@ -1666,7 +1666,7 @@
 						<!--Default appearance attributes for this AbstractGeometryPath.-->
 						<Appearance>
 							<!--The color, (red, green, blue), [0, 1], used to display the geometry. -->
-							<color>0.80000000000000004 0.10000000000000001 0.10000000000000001</color>
+							<color>0.94117647058823528 0.31372549019607843 0.22352941176470589</color>
 						</Appearance>
 						<!--The set of points defining the path-->
 						<PathPointSet>
@@ -1750,7 +1750,7 @@
 						<!--Default appearance attributes for this AbstractGeometryPath.-->
 						<Appearance>
 							<!--The color, (red, green, blue), [0, 1], used to display the geometry. -->
-							<color>0.80000000000000004 0.10000000000000001 0.10000000000000001</color>
+							<color>0.12156862745098039 0.26666666666666666 0.61176470588235299</color>
 						</Appearance>
 						<!--The set of points defining the path-->
 						<PathPointSet>
@@ -1862,7 +1862,7 @@
 						<!--Default appearance attributes for this AbstractGeometryPath.-->
 						<Appearance>
 							<!--The color, (red, green, blue), [0, 1], used to display the geometry. -->
-							<color>0.80000000000000004 0.10000000000000001 0.10000000000000001</color>
+							<color>0.12156862745098039 0.26666666666666666 0.61176470588235299</color>
 						</Appearance>
 						<!--The set of points defining the path-->
 						<PathPointSet>
@@ -1980,7 +1980,7 @@
 						<!--Default appearance attributes for this AbstractGeometryPath.-->
 						<Appearance>
 							<!--The color, (red, green, blue), [0, 1], used to display the geometry. -->
-							<color>0.80000000000000004 0.10000000000000001 0.10000000000000001</color>
+							<color>0.94117647058823528 0.31372549019607843 0.22352941176470589</color>
 						</Appearance>
 						<!--The set of points defining the path-->
 						<PathPointSet>
@@ -2052,7 +2052,7 @@
 						<!--Default appearance attributes for this AbstractGeometryPath.-->
 						<Appearance>
 							<!--The color, (red, green, blue), [0, 1], used to display the geometry. -->
-							<color>0.80000000000000004 0.10000000000000001 0.10000000000000001</color>
+							<color>0.94117647058823528 0.31372549019607843 0.22352941176470589</color>
 						</Appearance>
 						<!--The set of points defining the path-->
 						<PathPointSet>
@@ -2114,7 +2114,7 @@
 						<!--Default appearance attributes for this AbstractGeometryPath.-->
 						<Appearance>
 							<!--The color, (red, green, blue), [0, 1], used to display the geometry. -->
-							<color>0.80000000000000004 0.10000000000000001 0.10000000000000001</color>
+							<color>0.94117647058823528 0.31372549019607843 0.22352941176470589</color>
 						</Appearance>
 						<!--The set of points defining the path-->
 						<PathPointSet>
