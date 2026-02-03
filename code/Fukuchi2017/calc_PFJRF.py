@@ -11,6 +11,9 @@
     This script calculates and collates the different PFJRF approaches from
     each participant's simulated trials from the Fukuchi2017 dataset.
 
+    TODO:
+        > Remove 50 millisecond buffer from gait cycle times
+
 """
 
 # =========================================================================

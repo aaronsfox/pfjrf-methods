@@ -22,6 +22,8 @@
         > Simulations run on HPC on 20/01/2026
         > Re-created consistent guesses 01/02/2026 with optimised marker-only approach and higher control weight
         > Re-ran simulations with updated parameters on 02/02/2026
+        > Issues around start and end of simulation need to be resolved by extending time windows by 50 ms
+        > Re-ran simulations with modified weights, new mesh interval, acceleration goal 03/02/206
 
 """
 
@@ -95,6 +97,7 @@ if speed not in speed_list:
     raise ValueError(f'Input speed of {speed} is not a valid option. Check input for error...')
 
 # Create the general folder for the participant and speed
+os.makedirs(os.path.join('..','..','simulations',dataset,participant), exist_ok=True)
 os.makedirs(os.path.join('..','..','simulations',dataset,participant,speed), exist_ok=True)
 
 # OpenSim settings
@@ -110,6 +113,7 @@ osim.ModelVisualizer.addDirToGeometrySearchPaths(os.path.join(os.getcwd(), '..',
     # TODO: could do this with add scale factor to convert error to degrees squared? Don't think this is what it does though
 globalMarkerTrackingWeight = 1e1  # TODO: dramatically increased this from 1e-1 to get better tracking?
 # globalStateTrackingWeight = 1e1  # TODO: originally 1e0 - need to balance out increased effort goal
+globalAccelMinWeight = 1e-6  # used for minimising high frequency kinematic oscillations
 # globalTorqueControlWeight = 1e-3
 # globalMuscleControlWeight = 1e-3
 globalControlEffortWeight = 1e0  # TODO: originally 1e-3 - is this therefore causing high activations? yes, but need to balance state tracking...
@@ -118,6 +122,7 @@ globalControlEffortWeight = 1e0  # TODO: originally 1e-3 - is this therefore cau
 # Set mesh interval for dynamic optimisation
 # Note this is somewhat generic but follows some rules proposed by Falisse et al. for gait cycle mesh interval
 mesh_interval_dyn = 25
+# mesh_interval_dyn = 50  # used for creating more refined consistent guess
 
 # Set kinematics filter frequency
 # This matches marker data filter from associated paper
@@ -181,29 +186,29 @@ def run_dynamic_optimisation(model_type):
     marker_weights = {
         # Pelvis
         'R.ASIS': {'weight': 5.0}, 'L.ASIS': {'weight': 5.0}, 'R.PSIS': {'weight': 5.0}, 'L.PSIS': {'weight': 5.0},
-        'R.Iliac.Crest': {'weight': 0.0}, 'L.Iliac.Crest': {'weight': 0.0},
+        'R.Iliac.Crest': {'weight': 1.0}, 'L.Iliac.Crest': {'weight': 1.0},
         # Right thigh
         'R.GTR': {'weight': 0.0},
-        'R.Thigh.Top.Lateral': {'weight': 5.0}, 'R.Thigh.Bottom.Lateral': {'weight': 5.0},
-        'R.Thigh.Top.Medial': {'weight': 5.0}, 'R.Thigh.Bottom.Medial': {'weight': 5.0},
+        'R.Thigh.Top.Lateral': {'weight': 2.5}, 'R.Thigh.Bottom.Lateral': {'weight': 2.5},
+        'R.Thigh.Top.Medial': {'weight': 2.5}, 'R.Thigh.Bottom.Medial': {'weight': 2.5},
         'R.Knee': {'weight': 0.0}, 'R.Knee.Medial': {'weight': 0.0},
         # Right shank
         'R.HF': {'weight': 0.0}, 'R.TT': {'weight': 0.0},
-        'R.Shank.Top.Lateral': {'weight': 5.0}, 'R.Shank.Bottom.Lateral': {'weight': 5.0},
-        'R.Shank.Top.Medial': {'weight': 5.0}, 'R.Shank.Bottom.Medial': {'weight': 5.0},
+        'R.Shank.Top.Lateral': {'weight': 2.5}, 'R.Shank.Bottom.Lateral': {'weight': 2.5},
+        'R.Shank.Top.Medial': {'weight': 2.5}, 'R.Shank.Bottom.Medial': {'weight': 2.5},
         'R.Ankle': {'weight': 0.0}, 'R.Ankle.Medial': {'weight': 0.0},
         # Right foot
         'R.Heel.Top': {'weight': 5.0}, 'R.Heel.Bottom': {'weight': 5.0}, 'R.Heel.Lateral': {'weight': 5.0},
         'R.MT1': {'weight': 10.0}, 'R.MT2': {'weight': 0.0}, 'R.MT5': {'weight': 10.0},
         # Left thigh
         'L.GTR': {'weight': 0.0},
-        'L.Thigh.Top.Lateral': {'weight': 5.0}, 'L.Thigh.Bottom.Lateral': {'weight': 5.0},
-        'L.Thigh.Top.Medial': {'weight': 5.0}, 'L.Thigh.Bottom.Medial': {'weight': 5.0},
+        'L.Thigh.Top.Lateral': {'weight': 2.5}, 'L.Thigh.Bottom.Lateral': {'weight': 2.5},
+        'L.Thigh.Top.Medial': {'weight': 2.5}, 'L.Thigh.Bottom.Medial': {'weight': 2.5},
         'L.Knee': {'weight': 0.0}, 'L.Knee.Medial': {'weight': 0.0},
         # Left shank
         'L.HF': {'weight': 0.0}, 'L.TT': {'weight': 0.0},
-        'L.Shank.Top.Lateral': {'weight': 5.0}, 'L.Shank.Bottom.Lateral': {'weight': 5.0},
-        'L.Shank.Top.Medial': {'weight': 5.0}, 'L.Shank.Bottom.Medial': {'weight': 5.0},
+        'L.Shank.Top.Lateral': {'weight': 2.5}, 'L.Shank.Bottom.Lateral': {'weight': 2.5},
+        'L.Shank.Top.Medial': {'weight': 2.5}, 'L.Shank.Bottom.Medial': {'weight': 2.5},
         'L.Ankle': {'weight': 0.0}, 'L.Ankle.Medial': {'weight': 0.0},
         # Left foot
         'L.Heel.Top': {'weight': 5.0}, 'L.Heel.Bottom': {'weight': 5.0}, 'L.Heel.Lateral': {'weight': 5.0},
@@ -232,11 +237,13 @@ def run_dynamic_optimisation(model_type):
                   'hip_rotation_r': {'actuatorType': 'reserve', 'optForce': 1.0},
                   'knee_angle_r': {'actuatorType': 'reserve', 'optForce': 3.0},
                   'ankle_angle_r': {'actuatorType': 'reserve', 'optForce': 2.0},
+                  'subtalar_angle_r': {'actuatorType': 'reserve', 'optForce': 1.0},
                   'hip_flexion_l': {'actuatorType': 'torque', 'optForce': 300.0},
                   'hip_adduction_l': {'actuatorType': 'torque', 'optForce': 200.0},
                   'hip_rotation_l': {'actuatorType': 'torque', 'optForce': 100.0},
                   'knee_angle_l': {'actuatorType': 'torque', 'optForce': 300.0},
                   'ankle_angle_l': {'actuatorType': 'torque', 'optForce': 200.0},
+                  'subtalar_angle_l': {'actuatorType': 'torque', 'optForce': 100.0},
                   }
 
     # Select the gait cycle to run the simulation for
@@ -283,8 +290,11 @@ def run_dynamic_optimisation(model_type):
     select_end = select_from[select_from.index(select_start)+1]
 
     # Set the start and end times based on grf data
-    start_time = grf_time[select_start]
-    end_time = grf_time[select_end]
+    # Add 50 millisecond buffer either side to avoid potentially erroneous data in initial and final states
+    # This gets accounted for by removing when PFJ forces are calculated in a later script
+    # See De Groote et al. (2016)
+    start_time = grf_time[select_start] - 0.05
+    end_time = grf_time[select_end] + 0.05
 
     # =========================================================================
     # Set-up and run the tracking simulation
@@ -292,8 +302,6 @@ def run_dynamic_optimisation(model_type):
 
     # Set-up the model for the tracking simulation
     # -------------------------------------------------------------------------
-
-    # TODO: tendon compliance is currently ignored in the scaled model --- switch back on for some muscles?
 
     # Construct a model processor to use with the tool
     model_proc = osim.ModelProcessor(os.path.join('..', '..', '..', '..', '..', 'data', dataset, participant, 'scaling',
@@ -434,7 +442,7 @@ def run_dynamic_optimisation(model_type):
     effort.setWeightForControlPattern('/forceset/.*_reserve', 5.0)
     # Put low weight on torque actuators
     # Reduced this further after increasing overall control effort weight
-    effort.setWeightForControlPattern('/forceset/.*_torque', 1e-03)
+    effort.setWeightForControlPattern('/forceset/.*_torque', 1e-02)
     # Use standard weight for muscle controls
     # This probably doesn't change default but provides an option to set
     effort.setWeightForControlPattern('/forceset/.*_r', 1.0)
@@ -546,9 +554,16 @@ def run_dynamic_optimisation(model_type):
     solver.set_optim_max_iterations(3000)
     solver.set_num_mesh_intervals(mesh_interval_dyn)
     solver.set_optim_constraint_tolerance(1.0e-0)  # higher than desirable, but helps with convergence
-    solver.set_optim_convergence_tolerance(1.0e-2)  # higher than desirable, but helps with convergence
+    solver.set_optim_convergence_tolerance(1.0e-3)  # higher than desirable, but helps with convergence
     # solver.set_minimize_implicit_auxiliary_derivatives(True)
     # solver.set_implicit_auxiliary_derivatives_weight(globalAuxDerivWeight) 
+    
+    # Smoothness criterion
+    solver.set_multibody_dynamics_mode('implicit')
+    solver.set_minimize_implicit_multibody_accelerations(True)
+    solver.set_implicit_multibody_accelerations_weight(globalAccelMinWeight)
+    
+    # Reset problem
     solver.resetProblem(problem)
 
     # Get the initial guess
@@ -561,6 +576,9 @@ def run_dynamic_optimisation(model_type):
     for col in guess.getStateNames():
         if col in ik_data.getColumnLabels():
             guess.setState(col, ik_data.getDependentColumn(col).to_numpy())
+            
+    # Generate accelerations from coordinate speeds for implicit mode
+    guess.generateAccelerationsFromSpeeds()
 
     # # Set generic zero guess for forceset values
     # # This is if we want to use a default generic guess for forces rather than the consistent guess
@@ -746,11 +764,13 @@ def run_static_optimisation(model_type):
                   'hip_rotation_r': {'actuatorType': 'reserve', 'optForce': 1.0},
                   'knee_angle_r': {'actuatorType': 'reserve', 'optForce': 3.0},
                   'ankle_angle_r': {'actuatorType': 'reserve', 'optForce': 2.0},
+                  'subtalar_angle_r': {'actuatorType': 'reserve', 'optForce': 1.0},
                   'hip_flexion_l': {'actuatorType': 'torque', 'optForce': 300.0},
                   'hip_adduction_l': {'actuatorType': 'torque', 'optForce': 200.0},
                   'hip_rotation_l': {'actuatorType': 'torque', 'optForce': 100.0},
                   'knee_angle_l': {'actuatorType': 'torque', 'optForce': 300.0},
                   'ankle_angle_l': {'actuatorType': 'torque', 'optForce': 200.0},
+                  'subtalar_angle_l': {'actuatorType': 'torque', 'optForce': 100.0},
                   }
 
     # Prepare model for static optimisation

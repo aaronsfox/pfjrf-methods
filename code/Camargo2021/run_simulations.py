@@ -29,6 +29,14 @@
             >> Doesn't seem to fix pelvis drift problem
             >> Higher marker tracking weight?
         > Mesh interval of 50 is probably too slow and impractical to use
+        > Updated with marker only and higher effort weight goal as per Fukuchi code
+        > High frequency noise in solution and potential drift at end
+        > Add in 50 millisecond buffer to avoid erroneous forces at start/end of simulation
+
+    TODO:
+        > Add final marker goal to have model in position appropriately at end?
+        > Add smoothing criteria for bodies or potentially penalise torque controls a little more?
+
         
 
 """
@@ -143,14 +151,17 @@ osim.ModelVisualizer.addDirToGeometrySearchPaths(os.path.join(os.getcwd(), '..',
 # Nitschke et al. (2023) used lower weight of 10e-1 on joint tracking, but was in degrees squared (rather than radians?)
 # Nitschke et al. (2023) used lower weight of 10e-2 on joint tracking, but was in mm squared?
 globalMarkerTrackingWeight = 1e1  # TODO: dramatically increased this from 1e-1 to get better tracking?
+# globalMarkerFinalWeight = 1e2  # TODO: needed? too high?
 # globalStateTrackingWeight = 1e-1  # TODO: reduced this to check if data follows markers better
+globalAccelMinWeight = 1e-6  # TODO: useful?
 # globalTorqueControlWeight = 1e-3
 # globalMuscleControlWeight = 1e-3
 globalControlEffortWeight = 1e0  # TODO: originally 1e-3 - is this therefore causing high activations? yes, but need to balance state tracking...
 
 # Set mesh interval for dynamic optimisation
 # Note this is somewhat generic
-mesh_interval_dyn = 25
+# mesh_interval_dyn = 25
+mesh_interval_dyn = 50  # used for creating more refined consistent guess
 
 # Set kinematics filter frequency
 # This matches filter from associated paper
@@ -292,19 +303,19 @@ def run_dynamic_optimisation(model_type):
         # Pelvis
         'R_ASIS': {'weight': 5.0}, 'L_ASIS': {'weight': 5.0}, 'R_PSIS': {'weight': 5.0}, 'L_PSIS': {'weight': 5.0},
         # Right thigh
-        'R_Thigh_Upper': {'weight': 5.0}, 'R_Thigh_Front': {'weight': 5.0}, 'R_Thigh_Rear': {'weight': 5.0},
+        'R_Thigh_Upper': {'weight': 2.5}, 'R_Thigh_Front': {'weight': 2.5}, 'R_Thigh_Rear': {'weight': 2.5},
         'R_Knee_Lat': {'weight': 2.5},
         # Right shank
-        'R_Shank_Upper': {'weight': 5.0}, 'R_Shank_Front': {'weight': 5.0}, 'R_Shank_Rear': {'weight': 5.0},
+        'R_Shank_Upper': {'weight': 2.5}, 'R_Shank_Front': {'weight': 2.5}, 'R_Shank_Rear': {'weight': 2.5},
         'R_Ankle_Lat': {'weight': 2.5},
         # Right foot
         'R_Heel': {'weight': 10.0},
         'R_Toe_Tip': {'weight': 5.0}, 'R_Toe_Med': {'weight': 5.0}, 'R_Toe_Lat': {'weight': 5.0},
         # Left thigh
-        'L_Thigh_Upper': {'weight': 5.0}, 'L_Thigh_Front': {'weight': 5.0}, 'L_Thigh_Rear': {'weight': 5.0},
+        'L_Thigh_Upper': {'weight': 2.5}, 'L_Thigh_Front': {'weight': 2.5}, 'L_Thigh_Rear': {'weight': 2.5},
         'L_Knee_Lat': {'weight': 2.5},
         # Left shank
-        'L_Shank_Upper': {'weight': 5.0}, 'L_Shank_Front': {'weight': 5.0}, 'L_Shank_Rear': {'weight': 5.0},
+        'L_Shank_Upper': {'weight': 2.5}, 'L_Shank_Front': {'weight': 2.5}, 'L_Shank_Rear': {'weight': 2.5},
         'L_Ankle_Lat': {'weight': 2.5},
         # Left foot
         'L_Heel': {'weight': 10.0},
@@ -333,11 +344,13 @@ def run_dynamic_optimisation(model_type):
                   'hip_rotation_r': {'actuatorType': 'reserve', 'optForce': 1.0},
                   'knee_angle_r': {'actuatorType': 'reserve', 'optForce': 3.0},
                   'ankle_angle_r': {'actuatorType': 'reserve', 'optForce': 2.0},
+                  'subtalar_angle_r': {'actuatorType': 'reserve', 'optForce': 1.0},
                   'hip_flexion_l': {'actuatorType': 'torque', 'optForce': 300.0},
                   'hip_adduction_l': {'actuatorType': 'torque', 'optForce': 200.0},
                   'hip_rotation_l': {'actuatorType': 'torque', 'optForce': 100.0},
                   'knee_angle_l': {'actuatorType': 'torque', 'optForce': 300.0},
                   'ankle_angle_l': {'actuatorType': 'torque', 'optForce': 200.0},
+                  'subtalar_angle_l': {'actuatorType': 'torque', 'optForce': 100.0},
                   }
 
     # Identify the time period to run the simulation over
@@ -520,6 +533,11 @@ def run_dynamic_optimisation(model_type):
     if end_time - start_time > 2.0:
         raise ValueError('End time greater than 2 seconds after start. Check event identification...')
 
+    # Add 50 millisecond buffer on start and end time to avoid potentially erroneous initial and final states
+    # See De Groote et al. (2016)
+    start_time -= 0.05
+    end_time += 0.05
+
     # =========================================================================
     # Set-up and run the tracking simulation
     # =========================================================================
@@ -661,7 +679,8 @@ def run_dynamic_optimisation(model_type):
     # Put heavy weight on the reserve actuators
     effort.setWeightForControlPattern('/forceset/.*_reserve', 5.0)
     # Put low weight on torque actuators
-    effort.setWeightForControlPattern('/forceset/.*_torque', 0.1)
+    # Reduced this further after increasing overall control effort weight
+    effort.setWeightForControlPattern('/forceset/.*_torque', 1e-02)
     # Use standard weight for muscle controls
     # This probably doesn't change default but provides an option to set
     effort.setWeightForControlPattern('/forceset/.*_r', 1.0)
@@ -774,6 +793,13 @@ def run_dynamic_optimisation(model_type):
     solver.set_num_mesh_intervals(mesh_interval_dyn)
     solver.set_optim_constraint_tolerance(1.0e-0)  # TODO: higher than desirable, but helps with convergence
     solver.set_optim_convergence_tolerance(1.0e-2) # TODO: higher than desirable, but helps with convergence
+
+    # Smoothness criterion
+    solver.set_multibody_dynamics_mode('implicit')
+    solver.set_minimize_implicit_multibody_accelerations(True)
+    solver.set_implicit_multibody_accelerations_weight(globalAccelMinWeight)
+
+    # Reset problem
     solver.resetProblem(problem)
 
     # Get the initial guess
@@ -786,6 +812,9 @@ def run_dynamic_optimisation(model_type):
     for col in guess.getStateNames():
         if col in ik_data.getColumnLabels():
             guess.setState(col, ik_data.getDependentColumn(col).to_numpy())
+
+    # Generate accelerations from coordinate speeds for implicit mode
+    guess.generateAccelerationsFromSpeeds()
 
     # Set generic zero guess for forceset values
     # This is if we want to use a default generic guess for forces rather than the consistent guess
@@ -1033,11 +1062,13 @@ def run_static_optimisation(model_type):
                   'hip_rotation_r': {'actuatorType': 'reserve', 'optForce': 1.0},
                   'knee_angle_r': {'actuatorType': 'reserve', 'optForce': 3.0},
                   'ankle_angle_r': {'actuatorType': 'reserve', 'optForce': 2.0},
+                  'subtalar_angle_r': {'actuatorType': 'reserve', 'optForce': 1.0},
                   'hip_flexion_l': {'actuatorType': 'torque', 'optForce': 300.0},
                   'hip_adduction_l': {'actuatorType': 'torque', 'optForce': 200.0},
                   'hip_rotation_l': {'actuatorType': 'torque', 'optForce': 100.0},
                   'knee_angle_l': {'actuatorType': 'torque', 'optForce': 300.0},
                   'ankle_angle_l': {'actuatorType': 'torque', 'optForce': 200.0},
+                  'subtalar_angle_l': {'actuatorType': 'torque', 'optForce': 100.0},
                   }
 
     # Prepare model for static optimisation
@@ -1591,7 +1622,7 @@ def run_inverse_dynamics_optim(model_type):
     solver.set_optim_max_iterations(3000)
     solver.set_num_mesh_intervals(mesh_interval_dyn)
     solver.set_optim_constraint_tolerance(1.0e-0)  # higher than desirable, but helps with convergence
-    solver.set_optim_convergence_tolerance(1.0e-2)  # higher than desirable, but helps with convergence
+    solver.set_optim_convergence_tolerance(1.0e-3)  # higher than desirable, but helps with convergence
     solver.resetProblem(problem)
 
     # Solve the problem
