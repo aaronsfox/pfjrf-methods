@@ -11,9 +11,6 @@
     This script calculates and collates the different PFJRF approaches from
     each participant's simulated trials from the Fukuchi2017 dataset.
 
-    TODO:
-        > Remove 50 millisecond buffer from gait cycle times
-
 """
 
 # =========================================================================
@@ -192,6 +189,10 @@ def calculate_pfj_loads(participant):
         coordinates = osim.TimeSeriesTable(os.path.join(data_folder, f'{participant}run{speed}_coordinates.sto'))
         moments = osim.TimeSeriesTable(os.path.join(data_folder, f'{participant}run{speed}_inverse_dynamics_results.sto'))
 
+        # Trim the buffer 50 milliseconds of each side of the data
+        coordinates.trim(coordinates.getIndependentColumn()[0] + 0.05,coordinates.getIndependentColumn()[-1] - 0.05)
+        moments.trim(moments.getIndependentColumn()[0] + 0.05, moments.getIndependentColumn()[-1] - 0.05)
+
         # Extract necessary angles and moments
         # Set variables to extract
         extract_variables = ['hip_flexion_r', 'knee_angle_r', 'ankle_angle_r']
@@ -305,6 +306,10 @@ def calculate_pfj_loads(participant):
         # moment_arms = osim.TimeSeriesTable(os.path.join(
         #     data_folder, f'{participant}run{speed}_MuscleAnalysis_Complex_MomentArm_knee_angle_r.sto'))
 
+        # Trim the buffer 50 milliseconds of each side of the data
+        states.trim(states.getIndependentColumn()[0] + 0.05, states.getIndependentColumn()[-1] - 0.05)
+        muscle_forces.trim(muscle_forces.getIndependentColumn()[0] + 0.05, muscle_forces.getIndependentColumn()[-1] - 0.05)
+
         # Extract muscle forces from static optimisation for quadriceps alongside timestamps
         # Timestamps are consistent across all static optimisation files
         so_muscle_force = {musc: muscle_forces.getDependentColumn(musc).to_numpy() for musc in complex_quads}
@@ -391,6 +396,10 @@ def calculate_pfj_loads(participant):
             data_folder, f'{participant}run{speed}_dynamic-optimisation_complex_muscle-forces.sto'))
         # moment_arms = osim.TimeSeriesTable(os.path.join(
         #     data_folder, f'{participant}run{speed}_MuscleAnalysis_Complex_MomentArm_knee_angle_r.sto'))
+
+        # Trim the buffer 50 milliseconds of each side of the data
+        states.trim(states.getIndependentColumn()[0] + 0.05, states.getIndependentColumn()[-1] - 0.05)
+        muscle_forces.trim(muscle_forces.getIndependentColumn()[0] + 0.05, muscle_forces.getIndependentColumn()[-1] - 0.05)
 
         # Extract muscle forces from static optimisation for quadriceps alongside timestamps
         # Timestamps are consistent across all dynamic optimisation files

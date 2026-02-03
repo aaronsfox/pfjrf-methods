@@ -36,6 +36,8 @@
     TODO:
         > Add final marker goal to have model in position appropriately at end?
         > Add smoothing criteria for bodies or potentially penalise torque controls a little more?
+        > Not sure added 50 milliseconds helps in this instance - causes issues at beginning and end
+        > Minimising accelerations avoids jitteriness, but might also cause poorer tracking?
 
         
 
