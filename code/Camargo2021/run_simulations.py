@@ -38,6 +38,7 @@
         > Add smoothing criteria for bodies or potentially penalise torque controls a little more?
         > Not sure added 50 milliseconds helps in this instance - causes issues at beginning and end
         > Minimising accelerations avoids jitteriness, but might also cause poorer tracking?
+        > Consider polynomial muscle paths given improvements with OpenSim 4.6
 
         
 
@@ -229,7 +230,7 @@ def run_dynamic_optimisation(model_type):
     home_dir = os.getcwd()
     os.chdir(os.path.join('..','..','simulations',dataset,participant,trial_label,'dynamic_optimisation'))
 
-    # CopyGRF file to simulation directory
+    # Copy GRF file to simulation directory
     shutil.copyfile(
         os.path.join('..', '..', '..', '..', '..', 'data', dataset, participant, f'{trial_name}_grf.mot'),
         f'{trial_name}_grf.mot')
@@ -306,19 +307,19 @@ def run_dynamic_optimisation(model_type):
         'R_ASIS': {'weight': 5.0}, 'L_ASIS': {'weight': 5.0}, 'R_PSIS': {'weight': 5.0}, 'L_PSIS': {'weight': 5.0},
         # Right thigh
         'R_Thigh_Upper': {'weight': 2.5}, 'R_Thigh_Front': {'weight': 2.5}, 'R_Thigh_Rear': {'weight': 2.5},
-        'R_Knee_Lat': {'weight': 2.5},
+        'R_Knee_Lat': {'weight': 0.0},
         # Right shank
         'R_Shank_Upper': {'weight': 2.5}, 'R_Shank_Front': {'weight': 2.5}, 'R_Shank_Rear': {'weight': 2.5},
-        'R_Ankle_Lat': {'weight': 2.5},
+        'R_Ankle_Lat': {'weight': 0.0},
         # Right foot
         'R_Heel': {'weight': 10.0},
         'R_Toe_Tip': {'weight': 5.0}, 'R_Toe_Med': {'weight': 5.0}, 'R_Toe_Lat': {'weight': 5.0},
         # Left thigh
         'L_Thigh_Upper': {'weight': 2.5}, 'L_Thigh_Front': {'weight': 2.5}, 'L_Thigh_Rear': {'weight': 2.5},
-        'L_Knee_Lat': {'weight': 2.5},
+        'L_Knee_Lat': {'weight': 0.0},
         # Left shank
         'L_Shank_Upper': {'weight': 2.5}, 'L_Shank_Front': {'weight': 2.5}, 'L_Shank_Rear': {'weight': 2.5},
-        'L_Ankle_Lat': {'weight': 2.5},
+        'L_Ankle_Lat': {'weight': 0.0},
         # Left foot
         'L_Heel': {'weight': 10.0},
         'L_Toe_Tip': {'weight': 5.0}, 'L_Toe_Med': {'weight': 5.0}, 'L_Toe_Lat': {'weight': 5.0},
@@ -794,7 +795,10 @@ def run_dynamic_optimisation(model_type):
     solver.set_optim_max_iterations(3000)
     solver.set_num_mesh_intervals(mesh_interval_dyn)
     solver.set_optim_constraint_tolerance(1.0e-0)  # TODO: higher than desirable, but helps with convergence
-    solver.set_optim_convergence_tolerance(1.0e-2) # TODO: higher than desirable, but helps with convergence
+    solver.set_optim_convergence_tolerance(1.0e-3) # TODO: higher than desirable, but helps with convergence
+
+    # TODO: useful addition from OpenSim 4.6
+    solver.set_kinematic_constraint_method('Bordalba2023')
 
     # Smoothness criterion
     solver.set_multibody_dynamics_mode('implicit')

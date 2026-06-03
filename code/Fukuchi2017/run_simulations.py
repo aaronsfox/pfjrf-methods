@@ -23,7 +23,7 @@
         > Re-created consistent guesses 01/02/2026 with optimised marker-only approach and higher control weight
         > Re-ran simulations with updated parameters on 02/02/2026
         > Issues around start and end of simulation need to be resolved by extending time windows by 50 ms
-        > Re-ran simulations with modified weights, new mesh interval, acceleration goal 03/02/206
+        > Re-ran simulations with modified weights, new mesh interval, acceleration goal 03/02/2026
 
 """
 
