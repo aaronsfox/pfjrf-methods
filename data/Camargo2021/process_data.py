@@ -35,6 +35,7 @@ import glob
 # Set which processing steps to run
 runScaling = True
 runIK = True
+runMusclePathTool = False  # TODO: unlikely to use due to poor fitting - improvements in OpenSim 4.6 though...?
 
 # =========================================================================
 # Set-up
@@ -731,6 +732,169 @@ def run_ik(participant_id, trial):
                                 os.path.join(participant_id, 'ik', trial_label,
                                              f'{participant_id}_{trial_label}_ik_simple_filt.mot'))
 
+
+# Run the muscle path fitting tool
+# TODO: currently unused, but what about OpenSim 4.6 improvements?
+# -------------------------------------------------------------------------
+def run_path_fitting(participant_id):
+
+    # =========================================================================
+    # Fit polynomials to muscle paths
+    # =========================================================================
+
+    # Create the PolynomialPathFitter for the complex and simple models
+    # -------------------------------------------------------------------------
+    fitter_complex = osim.PolynomialPathFitter()
+    fitter_simple = osim.PolynomialPathFitter()
+
+    # Set the parameters in the path fitters
+    # -------------------------------------------------------------------------
+
+    # Set the models
+    model_complex = osim.Model(os.path.join(participant_id, 'scaling', f'{participant_id}_complex.osim'))
+    model_simple = osim.Model(os.path.join(participant_id, 'scaling', f'{participant_id}_simple.osim'))
+    model_complex.initSystem()
+    model_simple.initSystem()
+    fitter_complex.setModel(osim.ModelProcessor(model_complex))
+    fitter_simple.setModel(osim.ModelProcessor(model_simple))
+
+    # Set the coordinate values tables
+    # Use the highest ascending step height to theoretically get largest joint coordinate ranges
+    values_complex = osim.TimeSeriesTable(
+        os.path.join(participant_id, 'ik', 'ascent_7_rl', f'{participant_id}_ascent_7_rl_ik_complex_filt.mot'))
+    values_simple = osim.TimeSeriesTable(
+        os.path.join(participant_id, 'ik', 'ascent_7_rl', f'{participant_id}_ascent_7_rl_ik_simple_filt.mot'))
+    time_complex = values_complex.getIndependentColumn()
+    time_simple = values_complex.getIndependentColumn()
+    # These IK data have more rows than needed, so some rows are removed to speed up the process
+    for ii in range(len(time_complex)):
+        if ii % 5 != 0:
+            values_complex.removeRow(time_complex[ii])
+    for ii in range(len(time_simple)):
+        if ii % 5 != 0:
+            values_simple.removeRow(time_simple[ii])
+
+    # Set coordinate values in fitter
+    fitter_complex.setCoordinateValues(osim.TableProcessor(values_complex))
+    fitter_simple.setCoordinateValues(osim.TableProcessor(values_simple))
+
+    # Set the directory to where fitting results will be saved
+    fitter_complex.setOutputDirectory(os.path.join(participant_id, 'scaling', 'complex_fitter'))
+    fitter_simple.setOutputDirectory(os.path.join(participant_id, 'scaling', 'simple_fitter'))
+
+    # Set the maximum polynomial order
+    fitter_complex.setMaximumPolynomialOrder(6)
+    fitter_simple.setMaximumPolynomialOrder(6)
+
+    # Set moment arm threshold
+    # See: https://simtk.org/plugins/phpBB/viewtopicPhpbb.php?f=1815&t=17651&p=0&start=10&view=&sid=a562da3edb3423471892487d9e73dc15
+    fitter_complex.setMomentArmThreshold(25e-4)
+    fitter_simple.setMomentArmThreshold(25e-4)
+
+    # Set to use stepwise regression to fit lower order polynomials if necessary
+    fitter_complex.setUseStepwiseRegression(True)
+    fitter_simple.setUseStepwiseRegression(True)
+
+    # Set path length tolerance
+    # TODO: does it need to be changed from 0.0001?
+    # fitter_complex.setPathLengthTolerance(1e-3)
+    # fitter_simple.setPathLengthTolerance(1e-3)
+
+    # Run the fitter tools
+    # -------------------------------------------------------------------------
+    fitter_simple.run()
+    print(f'{"*"*10} POLYNOMIAL FITTING COMPLETED FOR SIMPLE MODEL {"*"*10}')
+    fitter_complex.run()
+    print(f'{"*" * 10} POLYNOMIAL FITTING COMPLETED FOR COMPLEX MODEL {"*" * 10}')
+
+    # =========================================================================
+    # Visualise fitting
+    # =========================================================================
+
+    # Set colouring for plot
+    original_col = 'blue'
+    fitted_col = 'orange'
+
+    # Set row and column numbers
+    nrows = 5
+    ncols = 5
+
+    # Loop through the two models
+    for model_type in ['complex', 'simple']:
+
+        # Loop through fitting variables
+        for fit_var in ['path_lengths', 'moment_arms']:
+
+            # Read in path lengths
+            original = osim.TimeSeriesTable(os.path.join(os.path.join(participant_id, 'scaling', f'{model_type}_fitter',
+                                                                      f'{participant_id}_{model_type}_{fit_var}.sto')))
+            fitted = osim.TimeSeriesTable(os.path.join(os.path.join(participant_id, 'scaling', f'{model_type}_fitter',
+                                                                    f'{participant_id}_{model_type}_{fit_var}_fitted.sto')))
+            sampled = osim.TimeSeriesTable(os.path.join(os.path.join(participant_id, 'scaling', f'{model_type}_fitter',
+                                                                     f'{participant_id}_{model_type}_{fit_var}_sampled.sto')))
+            sampled_fitted = osim.TimeSeriesTable(os.path.join(os.path.join(participant_id, 'scaling', f'{model_type}_fitter',
+                                                                            f'{participant_id}_{model_type}_{fit_var}_sampled_fitted.sto')))
+
+            # Plot the results
+
+            # Set the labels and colouring
+            labels = original.getColumnLabels()
+            if fit_var == 'path_lengths':
+                ylabel = 'Length (cm)'
+            elif fit_var == 'moment_arms':
+                ylabel = 'Moment Arm (cm)'
+
+            # Determine required number of figures
+            nplots = nrows * ncols
+            nfig = int(np.ceil(len(labels) / nplots))
+
+            # Create figures
+            for ifig in range(nfig):
+                # Create the figure and axes
+                fig, ax = plt.subplots(nrows, ncols,
+                                       figsize=(12, 10))
+                # Loop through rows and columns
+                for irow in range(nrows):
+                    for icol in range(ncols):
+                        # Set plot and label
+                        iplot = irow * ncols + icol
+                        ilabel = iplot + ifig * nplots
+                        if ilabel < len(labels):
+                            # Set plotting axis
+                            plot_ax = ax[irow, icol]
+                            # Plot sampled values
+                            plot_ax.scatter(sampled.getIndependentColumn(),
+                                            sampled.getDependentColumn(labels[ilabel]).to_numpy(),
+                                            alpha=0.15, color=original_col, s=0.4)
+                            # Plot sample fitted values
+                            plot_ax.scatter(sampled_fitted.getIndependentColumn(),
+                                            sampled_fitted.getDependentColumn(labels[ilabel]).to_numpy(),
+                                            alpha=0.15, color=fitted_col, s=0.4)
+                            # Plot original values
+                            plot_ax.plot(original.getIndependentColumn(),
+                                         original.getDependentColumn(labels[ilabel]).to_numpy(),
+                                         lw=1.5, color=original_col)
+                            # Plot fitted values
+                            plot_ax.plot(fitted.getIndependentColumn(),
+                                         fitted.getDependentColumn(labels[ilabel]).to_numpy(),
+                                         lw=1.5, color=fitted_col)
+                            # Set axis limits and labels
+                            plot_ax.set_xlim(original.getIndependentColumn()[0],
+                                             original.getIndependentColumn()[-1])
+                            plot_ax.set_title(labels[ilabel], fontsize=6, fontweight='bold')
+                            plot_ax.set_xlabel('Time (s)', fontsize=6, fontweight='bold')
+                            plot_ax.set_ylabel(ylabel, fontsize=6, fontweight='bold')
+                        else:
+                            # Switch the unused axis off
+                            ax[irow, icol].axis('off')
+                # Modify layout
+                plt.tight_layout()
+                # Save figure
+                fig.savefig(os.path.join(participant_id, 'scaling', f'{model_type}_fitter',
+                                         f'{participant_id}_{model_type}_{fit_var}_fig{ifig+1}.png'),
+                            format='png', dpi=300)
+                # Close figure
+                plt.close('all')
 
 # =========================================================================
 # Process experimental data
