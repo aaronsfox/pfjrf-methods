@@ -1,0 +1,147 @@
+[info] Loaded model HA22_complex from file ../../../../../data/Loone2025/HA22/scaling/HA22_complex.osim
+[info] AbstractTool HA22_SRRun loading model HA22_SRRun_static_optimisation_complex.osim
+[info] Loaded model HA22_complex from file HA22_SRRun_static_optimisation_complex.osim
+[info] Storage: read data file = SRRun01_grf.mot (nr=10005 nc=19)
+[info] ExternalForce::RightGRF Data source being set to SRRun01_grf
+[info] ExternalForce::LeftGRF Data source being set to SRRun01_grf
+[info] Loading states from file 'HA22_SRRun_states.sto'.
+[info] Found 51 state vectors with time stamps ranging from 144.348 to 145.208.
+[info] Executing the analyses from 144.348 to 145.208...
+[info] Storage: read data file = SRRun01_grf.mot (nr=10005 nc=19)
+[info] ExternalForce::RightGRF Data source being set to SRRun01_grf
+[info] ExternalForce::LeftGRF Data source being set to SRRun01_grf
+[info] Storage: read data file = SRRun01_grf.mot (nr=10005 nc=19)
+[info] ExternalForce::RightGRF Data source being set to SRRun01_grf
+[info] ExternalForce::LeftGRF Data source being set to SRRun01_grf
+time = 144.348 Performance = 857.6968906542611 Constraint violation = 1.6978850101894152e-09
+[info] Bounds for 'addbrev_r': 0.01 to inf.
+[info] Bounds for 'addlong_r': 0.01 to inf.
+[info] Bounds for 'addmagDist_r': 0.01 to inf.
+[info] Bounds for 'addmagIsch_r': 0.01 to inf.
+[info] Bounds for 'addmagMid_r': 0.01 to inf.
+[info] Bounds for 'addmagProx_r': 0.01 to inf.
+[info] Bounds for 'bflh_r': 0.01 to inf.
+[info] Bounds for 'bfsh_r': 0.01 to inf.
+[info] Bounds for 'edl_r': 0.01 to inf.
+[info] Bounds for 'ehl_r': 0.01 to inf.
+[info] Bounds for 'fdl_r': 0.01 to inf.
+[info] Bounds for 'fhl_r': 0.01 to inf.
+[info] Bounds for 'gaslat_r': 0.01 to inf.
+[info] Bounds for 'gasmed_r': 0.01 to inf.
+[info] Bounds for 'glmax1_r': 0.01 to inf.
+[info] Bounds for 'glmax2_r': 0.01 to inf.
+[info] Bounds for 'glmax3_r': 0.01 to inf.
+[info] Bounds for 'glmed1_r': 0.01 to inf.
+[info] Bounds for 'glmed2_r': 0.01 to inf.
+[info] Bounds for 'glmed3_r': 0.01 to inf.
+[info] Bounds for 'glmin1_r': 0.01 to inf.
+[info] Bounds for 'glmin2_r': 0.01 to inf.
+[info] Bounds for 'glmin3_r': 0.01 to inf.
+[info] Bounds for 'grac_r': 0.01 to inf.
+[info] Bounds for 'iliacus_r': 0.01 to inf.
+[info] Bounds for 'perbrev_r': 0.01 to inf.
+[info] Bounds for 'perlong_r': 0.01 to inf.
+[info] Bounds for 'piri_r': 0.01 to inf.
+[info] Bounds for 'psoas_r': 0.01 to inf.
+[info] Bounds for 'recfem_r': 0.01 to inf.
+[info] Bounds for 'sart_r': 0.01 to inf.
+[info] Bounds for 'semimem_r': 0.01 to inf.
+[info] Bounds for 'semiten_r': 0.01 to inf.
+[info] Bounds for 'soleus_r': 0.01 to inf.
+[info] Bounds for 'tfl_r': 0.01 to inf.
+[info] Bounds for 'tibant_r': 0.01 to inf.
+[info] Bounds for 'tibpost_r': 0.01 to inf.
+[info] Bounds for 'vasint_r': 0.01 to inf.
+[info] Bounds for 'vaslat_r': 0.01 to inf.
+[info] Bounds for 'vasmed_r': 0.01 to inf.
+[info] Bounds for 'pelvis_tx_residual': -inf to inf.
+[info] Bounds for 'pelvis_ty_residual': -inf to inf.
+[info] Bounds for 'pelvis_tz_residual': -inf to inf.
+[info] Bounds for 'pelvis_tilt_residual': -inf to inf.
+[info] Bounds for 'pelvis_list_residual': -inf to inf.
+[info] Bounds for 'pelvis_rotation_residual': -inf to inf.
+[info] Bounds for 'hip_flexion_r_reserve': -inf to inf.
+[info] Bounds for 'hip_adduction_r_reserve': -inf to inf.
+[info] Bounds for 'hip_rotation_r_reserve': -inf to inf.
+[info] Bounds for 'knee_angle_r_reserve': -inf to inf.
+[info] Bounds for 'ankle_angle_r_reserve': -inf to inf.
+[info] Bounds for 'subtalar_angle_r_reserve': -inf to inf.
+[info] Bounds for 'hip_flexion_l_torque': -inf to inf.
+[info] Bounds for 'hip_adduction_l_torque': -inf to inf.
+[info] Bounds for 'hip_rotation_l_torque': -inf to inf.
+[info] Bounds for 'knee_angle_l_torque': -inf to inf.
+[info] Bounds for 'ankle_angle_l_torque': -inf to inf.
+[info] Bounds for 'subtalar_angle_l_torque': -inf to inf.
+time = 144.3652 Performance = 56.16851544760847 Constraint violation = 3.3566398946636505e-10
+time = 144.3824 Performance = 251.79593539366377 Constraint violation = 2.50050521223201e-10
+time = 144.3996 Performance = 83.3975733252451 Constraint violation = 7.919652028410869e-10
+time = 144.4168 Performance = 35.13253755725704 Constraint violation = 2.431743474180846e-10
+time = 144.434 Performance = 87.3503513357987 Constraint violation = 4.0411024796638323e-10
+time = 144.4512 Performance = 47.207357747842096 Constraint violation = 8.801892951345231e-13
+time = 144.4684 Performance = 228.04329684008067 Constraint violation = 2.3390608096454163e-09
+time = 144.4856 Performance = 471.0281004284784 Constraint violation = 8.256456772924534e-09
+time = 144.5028 Performance = 92.0457839631786 Constraint violation = 1.1306869980907426e-10
+time = 144.52 Performance = 2859.8203129199046 Constraint violation = 6.503217571967672e-10
+time = 144.5372 Performance = 763.3508989133511 Constraint violation = 2.2849190907607628e-08
+time = 144.5544 Performance = 5347.600665488981 Constraint violation = 2.661867372107527e-10
+time = 144.5716 Performance = 1870.9165336522371 Constraint violation = 6.597549470633005e-11
+time = 144.5888 Performance = 2638.725315894878 Constraint violation = 2.513992967508561e-10
+time = 144.606 Performance = 2407.142303166506 Constraint violation = 3.3285529387957735e-10
+time = 144.6232 Performance = 333.6463169540866 Constraint violation = 7.712231749494666e-11
+time = 144.6404 Performance = 70.47475462952046 Constraint violation = 8.551575906559801e-11
+time = 144.6576 Performance = 153.48122899537842 Constraint violation = 4.4322580670473343e-10
+time = 144.6748 Performance = 42.38750134533726 Constraint violation = 1.1080131256800394e-10
+time = 144.692 Performance = 65.59192851337426 Constraint violation = 1.61912217261181e-11
+time = 144.7092 Performance = 91.50588957768312 Constraint violation = 8.768590422992094e-12
+time = 144.7264 Performance = 127.5205387303108 Constraint violation = 7.248101465871456e-10
+time = 144.7436 Performance = 52.96686223096429 Constraint violation = 2.1984247756129404e-11
+time = 144.7608 Performance = 32.02215364735738 Constraint violation = 7.874318827350232e-11
+time = 144.778 Performance = 41.49877621980657 Constraint violation = 1.675382238009422e-10
+time = 144.7952 Performance = 3.2986961262397285 Constraint violation = 2.6209238461260506e-12
+time = 144.8124 Performance = 66.10129513353941 Constraint violation = 1.0571420236913347e-09
+time = 144.8296 Performance = 78.01002949722002 Constraint violation = 1.0169460629649916e-10
+time = 144.8468 Performance = 24.59002363194104 Constraint violation = 6.365245537342199e-11
+time = 144.864 Performance = 190.00795179901726 Constraint violation = 6.459201563377448e-10
+time = 144.8812 Performance = 141.07576822562146 Constraint violation = 2.5899662494945844e-11
+time = 144.8984 Performance = 451.81974039517075 Constraint violation = 1.9036390607424977e-10
+time = 144.9156 Performance = 518.615067310624 Constraint violation = 1.3560266917377757e-08
+time = 144.9328 Performance = 5697.944758949621 Constraint violation = 2.2342209426423886e-09
+time = 144.95 Performance = 1930.924609266025 Constraint violation = 3.5695443608800644e-09
+time = 144.9672 Performance = 712.7943488696347 Constraint violation = 4.7173772912497447e-08
+time = 144.9844 Performance = 143.06122226593314 Constraint violation = 2.2140018065379315e-10
+time = 145.0016 Performance = 278.0617924503642 Constraint violation = 7.504735490323477e-10
+time = 145.0188 Performance = 244.36330303456006 Constraint violation = 5.733366932205209e-11
+time = 145.036 Performance = 48.69325356459184 Constraint violation = 1.1191569431523584e-11
+time = 145.0532 Performance = 89.3624852065031 Constraint violation = 1.1534644923254167e-10
+time = 145.0704 Performance = 321.17993005878526 Constraint violation = 1.0807654596169168e-09
+time = 145.0876 Performance = 148.85539670346338 Constraint violation = 6.8410362141720745e-12
+time = 145.1048 Performance = 46.572197714216294 Constraint violation = 5.269446212059566e-12
+time = 145.122 Performance = 83.05167365264323 Constraint violation = 3.560933899737523e-11
+time = 145.1392 Performance = 534.3690220893758 Constraint violation = 3.161605172309958e-10
+time = 145.1564 Performance = 274.62854739376894 Constraint violation = 1.4168720582108015e-11
+time = 145.1736 Performance = 86.66903345581954 Constraint violation = 2.503443408907068e-10
+time = 145.1908 Performance = 5.956916028221124 Constraint violation = 3.2081941679191996e-13
+time = 145.208 Performance = 270.3073880130093 Constraint violation = 1.1049579916482748e-09
+[info] Printing results of investigation HA22_SRRun to .
+[info] Loaded model HA22_complex from file ../../../../../data/Loone2025/HA22/scaling/HA22_complex.osim
+[info] Loaded model HA22_complex from file HA22_SRRun_inverse_dynamics_complex.osim
+
+               MODEL: HA22_complex
+         coordinates: 20
+              forces: 0
+           actuators: 0
+             muscles: 0
+            analyses: 0
+              probes: 0
+              bodies: 13
+              joints: 13
+         constraints: 2
+             markers: 32
+         controllers: 0
+  contact geometries: 0
+misc modelcomponents: 0
+[info] Running tool HA22_SRRun...
+[info] Storage: read data file = SRRun01_grf.mot (nr=10005 nc=19)
+[info] ExternalForce::RightGRF Data source being set to SRRun01_grf
+[info] ExternalForce::LeftGRF Data source being set to SRRun01_grf
+[info] InverseDynamicsTool: 51 time frames in 1 second(s).

@@ -1,0 +1,11 @@
+Traceback (most recent call last):
+  File "/home/remote/aafox/pfjrf-methods/code/Loone2025/run_simulations.py", line 1063, in <module>
+    run_static_optimisation('complex')
+  File "/home/remote/aafox/pfjrf-methods/code/Loone2025/run_simulations.py", line 745, in run_static_optimisation
+    dynamic_opt_traj = osim.MocoTrajectory(os.path.join(
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/remote/aafox/.conda/envs/opensim46_py311/lib/python3.11/site-packages/opensim/moco.py", line 7974, in __init__
+    _moco.MocoTrajectory_swiginit(self, _moco.new_MocoTrajectory(*args))
+                                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: std::exception in 'OpenSim::MocoTrajectory::MocoTrajectory(std::string const &)': File '../dynamic_optimisation/HA07_SRRun_dynamic-optimisation_complex_solution.sto' does not exist.
+	Thrown at DelimFileAdapter.h:315 in extendRead().
