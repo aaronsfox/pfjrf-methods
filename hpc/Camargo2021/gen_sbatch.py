@@ -121,16 +121,16 @@ if __name__ == '__main__':
     # Create sbatch scripts
     # -------------------------------------------------------------------------
 
-    # # Loop through participants to create sbatch scripts for individual speeds
-    # for participant in participant_list:
-    #     for direction in ['ascent','descent']:
-    #         for height in [4,7]:
-    #             for leg in ['rl']:
-    #                 create_sbatch(participant, direction, height, leg)
-
-    # Loop through participants to create sbatch scripts for all speeds
+    # Loop through participants to create sbatch scripts for individual speeds
     for participant in participant_list:
-        create_sbatch_all(participant)
+        for direction in ['ascent','descent']:
+            for height in [4,7]:
+                for leg in ['rl']:
+                    create_sbatch(participant, direction, height, leg)
+
+    # # Loop through participants to create sbatch scripts for all speeds
+    # for participant in participant_list:
+    #     create_sbatch_all(participant)
 
     # Finalise and exit kernel
     # -------------------------------------------------------------------------

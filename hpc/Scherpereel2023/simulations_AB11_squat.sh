@@ -1,12 +1,12 @@
 #!/bin/bash
-#SBATCH --job-name=simulations_HA12
+#SBATCH --job-name=simulations_AB11_squat
 #SBATCH --ntasks=1
 #SBATCH --partition=normal
 #SBATCH --mem-per-cpu=8G
 #SBATCH --cpus-per-task=12
 #SBATCH --time=12:00:00
-#SBATCH --output=simulations_HA12.log
+#SBATCH --output=simulations_AB11_squat.log
 #SBATCH --mail-user=aaron.f@deakin.edu.au
 #SBATCH --mail-type=ALL
 
-python run_simulations.py -p HA12 -c SRRun
+python run_simulations_squat.py -p AB11

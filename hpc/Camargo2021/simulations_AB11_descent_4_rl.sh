@@ -1,0 +1,12 @@
+#!/bin/bash
+#SBATCH --job-name=simulations_AB11_descent_4_rl
+#SBATCH --ntasks=1
+#SBATCH --partition=normal
+#SBATCH --mem-per-cpu=8G
+#SBATCH --cpus-per-task=12
+#SBATCH --time=12:00:00
+#SBATCH --output=simulations_AB11_descent_4_rl.log
+#SBATCH --mail-user=aaron.f@deakin.edu.au
+#SBATCH --mail-type=ALL
+
+python run_simulations.py --participant AB11 --direction descent --height 4 --leg rl
