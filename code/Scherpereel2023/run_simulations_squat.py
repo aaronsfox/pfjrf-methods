@@ -9,7 +9,7 @@
     aaron.f@deakin.edu.au
 
     This script runs the various torque and muscle driven simulations of
-    the running gait cycles for to generate the outputs for calculating
+    the squatting task to generate the outputs for calculating
     patellofemoral joint reaction forces with different modelling approaches.
 
     With the approach of using state tracking for the dynamic optimisation,
@@ -18,7 +18,7 @@
     dynamics approaches.
 
     STATUS:
-        > TODO
+        >
 
 """
 
@@ -44,14 +44,11 @@ from glob import glob
 # =========================================================================
 
 # Set participant ID to run
-# participant = 'PA17'
-# condition = 'SRRun'
+# participant = 'AB12'
 parser = argparse.ArgumentParser()
 parser.add_argument('-p', '--participant', action = 'store', type = str, help = 'Enter the participant ID')
-parser.add_argument('-c', '--condition', action = 'store', type = str, help = 'Enter the condition label (e.g. SRRun)')
 args = parser.parse_args()
 participant = args.participant
-condition = args.condition
 
 # Settings for running specific sections of code
 runDynamicOpt = True
@@ -66,10 +63,7 @@ runInverseDyn = True
 # -------------------------------------------------------------------------
 
 # Set dataset name
-dataset = 'Loone2025'
-
-# Read in participant info
-participantInfo = pd.read_csv(os.path.join('..','..','data',dataset,'selected_participant_info.csv'))
+dataset = 'Scherpereel2023'
 
 # Get participant list from folder
 participant_list = [ii for ii in os.listdir(
@@ -80,19 +74,9 @@ participant_list = [ii for ii in os.listdir(
 if participant not in participant_list:
     raise ValueError(f'No data found for participant ID {participant}. Check input for error...')
 
-# Set the list of conditions to process
-# Currently only one anyway, but if more were to be added it could be done
-condition_list = [
-    'SRRun',   # standard shoe running
-    ]
-
-# Check if input speed is in list
-if condition not in condition_list:
-    raise ValueError(f'Input condition {condition} is not a valid option. Check input for error...')
-
 # Create the general folder for the participant and speed
 os.makedirs(os.path.join('..','..','simulations',dataset,participant), exist_ok=True)
-os.makedirs(os.path.join('..','..','simulations',dataset,participant,condition), exist_ok=True)
+os.makedirs(os.path.join('..','..','simulations',dataset,participant,'squat'), exist_ok=True)
 
 # OpenSim settings
 # -------------------------------------------------------------------------
@@ -105,22 +89,21 @@ osim.ModelVisualizer.addDirToGeometrySearchPaths(os.path.join(os.getcwd(), '..',
 # Nitschke et al. (2023) used lower weight of 10e-1 on joint tracking, but was in degrees squared (rather than radians?)
 # Nitschke et al. (2023) used lower weight of 10e-2 on joint tracking, but was in mm squared?
     # TODO: could do this with add scale factor to convert error to degrees squared? Don't think this is what it does though
-globalMarkerTrackingWeight = 1e1  # TODO: dramatically increased this from 1e-1 to get better tracking?
+globalMarkerTrackingWeight = 1e1  # TODO: originally 1e1, testing lower...dramatically increased this from 1e-1 to get better tracking?
 # globalStateTrackingWeight = 1e1  # TODO: originally 1e0 - need to balance out increased effort goal
-globalAccelMinWeight = 1e-6  # used for minimising high frequency kinematic oscillations
+globalAccelMinWeight = 1e-4  # higher than others given different motion; used for minimising high frequency kinematic oscillations
 # globalTorqueControlWeight = 1e-3
 # globalMuscleControlWeight = 1e-3
-globalControlEffortWeight = 1e0  # TODO: originally 1e-3 - is this therefore causing high activations? yes, but need to balance state tracking...
+globalControlEffortWeight = 1e-1 # TODO: 1e-1 seems to be a sweet spot for these data
 # globalAuxDerivWeight = 1e-3  # based on Denton and Umberger (2023)
 
 # Set mesh interval for dynamic optimisation
-# Note this is somewhat generic but follows some rules proposed by Falisse et al. for gait cycle mesh interval
+# Note this is somewhat generic but gives a smooth trajectory
 mesh_interval_dyn = 25
-# mesh_interval_dyn = 50  # used for creating more refined consistent guess
 
 # Set kinematics filter frequency
 # This matches marker data filter from earlier
-kinematic_filt_freq = 10
+kinematic_filt_freq = 6
 
 # =========================================================================
 # Define functions
@@ -151,15 +134,15 @@ def run_dynamic_optimisation(model_type):
     # -------------------------------------------------------------------------
 
     # Create the folder for simulation
-    os.makedirs(os.path.join('..','..','simulations',dataset,participant,condition,'dynamic_optimisation'), exist_ok=True)
+    os.makedirs(os.path.join('..','..','simulations',dataset,participant,'squat','dynamic_optimisation'), exist_ok=True)
 
     # Navigate to simulation folder for ease of use
     home_dir = os.getcwd()
-    os.chdir(os.path.join('..','..','simulations',dataset,participant,condition,'dynamic_optimisation'))
+    os.chdir(os.path.join('..','..','simulations',dataset,participant,'squat','dynamic_optimisation'))
 
     # Identify trial label
     # Use the created mot file to do this
-    mot_file = glob(os.path.join('..', '..', '..', '..', '..', 'data', dataset, participant,f'{condition}*_grf.mot'))[0]
+    mot_file = glob(os.path.join('..', '..', '..', '..', '..', 'data', dataset, participant,'squat*_grf.mot'))[0]
     trial_label = os.path.split(mot_file)[-1].split('_grf.mot')[0]
 
     # Copy external loads file to simulation directory
@@ -172,14 +155,14 @@ def run_dynamic_optimisation(model_type):
 
     # Copy marker file to simulation directory
     shutil.copyfile(
-        os.path.join('..', '..', '..', '..', '..', 'data', dataset, participant, f'{trial_label}_filt.trc'),
-        f'{trial_label}_filt.trc')
+        os.path.join('..', '..', '..', '..', '..', 'data', dataset, participant, f'{trial_label}.trc'),
+        f'{trial_label}.trc')
 
     # Copy IK data to simulation directory
     shutil.copyfile(
-        os.path.join('..', '..', '..', '..', '..', 'data', dataset, participant, 'ik', condition,
-                     f'{participant}_{condition}_ik_{model_type}_filt.mot'),
-        f'{participant}_{condition}_ik_{model_type}_filt.mot')
+        os.path.join('..', '..', '..', '..', '..', 'data', dataset, participant, 'ik', trial_label,
+                     f'{participant}_{trial_label}_ik_{model_type}_filt.mot'),
+        f'{participant}_{trial_label}_ik_{model_type}_filt.mot')
 
     # # Copy function based path set for polynomial approximation of muscles
     # shutil.copyfile(
@@ -189,27 +172,28 @@ def run_dynamic_optimisation(model_type):
 
     # Set marker tracking weights
     marker_weights = {
+        # Torso
+        'C7': {'weight': 10.0}, 'STRN': {'weight': 10.0}, 'LSHO': {'weight': 5.0},
         # Pelvis
-        'RASIS': {'weight': 5.0}, 'LASIS': {'weight': 5.0}, 'RPSIS': {'weight': 5.0}, 'LPSIS': {'weight': 5.0},
-        'RILCR': {'weight': 2.5}, 'LILCR': {'weight': 2.5},
+        'RASI': {'weight': 5.0}, 'LASI': {'weight': 5.0}, 'RPSI': {'weight': 5.0}, 'LPSI': {'weight': 5.0},
         # Right thigh
-        # 'RGTR': {'weight': 0.0},
-        'RTHI': {'weight': 5.0}, 'RLTHI': {'weight': 5.0},
-        # 'RLEP': {'weight': 0.0}, 'RMEP': {'weight': 0.0},
+        'RGTR': {'weight': 0.0},
+        'RTHC': {'weight': 5.0}, 'RTHL': {'weight': 5.0}, 'RTHR': {'weight': 5.0},
+        'RKNE': {'weight': 0.0}, 'RMKNE': {'weight': 0.0},
         # Right shank
-        'RPSH': {'weight': 5.0}, 'RLSH': {'weight': 5.0}, 'RDSH': {'weight': 5.0},
-        # 'RLMAL': {'weight': 0.0}, 'RMMAL': {'weight': 0.0},
+        'RSHC': {'weight': 5.0}, 'RSHL': {'weight': 5.0}, 'RSHR': {'weight': 5.0},
+        'RANK': {'weight': 0.0}, 'RMANK': {'weight': 0.0},
         # Right foot
-        'RHEE': {'weight': 5.0}, 'RTOE': {'weight': 10.0}, 'R5TH': {'weight': 10.0},
+        'RHEEL': {'weight': 5.0}, 'RMT1': {'weight': 5.0}, 'RMT5': {'weight': 5.0},
         # Left thigh
-        # 'LGTR': {'weight': 0.0},
-        'LTHI': {'weight': 5.0}, 'LLTHI': {'weight': 5.0},
-        # 'LLEP': {'weight': 0.0}, 'LMEP': {'weight': 0.0},
+        'LGTR': {'weight': 0.0},
+        'LTHC': {'weight': 5.0}, 'LTHL': {'weight': 5.0}, 'LTHR': {'weight': 5.0},
+        'LKNE': {'weight': 0.0}, 'LMKNE': {'weight': 0.0},
         # Left shank
-        'LPSH': {'weight': 5.0}, 'LLSH': {'weight': 5.0}, 'LDSH': {'weight': 5.0},
-        # 'LLMAL': {'weight': 0.0}, 'LMMAL': {'weight': 0.0},
+        'LSHC': {'weight': 5.0}, 'LSHL': {'weight': 5.0}, 'LSHR': {'weight': 5.0},
+        'LANK': {'weight': 0.0}, 'LMANK': {'weight': 0.0},
         # Left foot
-        'LHEE': {'weight': 5.0}, 'LTOE': {'weight': 10.0}, 'L5TH': {'weight': 10.0},
+        'LHEEL': {'weight': 5.0}, 'LMT1': {'weight': 5.0}, 'LMT5': {'weight': 5.0},
     }
 
     # # Set state tracking weights
@@ -223,9 +207,9 @@ def run_dynamic_optimisation(model_type):
     # speeds_scale = 0.01
 
     # Set actuator forces to support simulation
-    act_forces = {'pelvis_tx': {'actuatorType': 'residual', 'optForce': 5},
-                  'pelvis_ty': {'actuatorType': 'residual', 'optForce': 5},
-                  'pelvis_tz': {'actuatorType': 'residual', 'optForce': 5},
+    act_forces = {'pelvis_tx': {'actuatorType': 'residual', 'optForce': 5.0},
+                  'pelvis_ty': {'actuatorType': 'residual', 'optForce': 5.0},
+                  'pelvis_tz': {'actuatorType': 'residual', 'optForce': 5.0},
                   'pelvis_tilt': {'actuatorType': 'residual', 'optForce': 2.5},
                   'pelvis_list': {'actuatorType': 'residual', 'optForce': 2.5},
                   'pelvis_rotation': {'actuatorType': 'residual', 'optForce': 2.5},
@@ -241,55 +225,10 @@ def run_dynamic_optimisation(model_type):
                   'knee_angle_l': {'actuatorType': 'torque', 'optForce': 300.0},
                   'ankle_angle_l': {'actuatorType': 'torque', 'optForce': 200.0},
                   'subtalar_angle_l': {'actuatorType': 'torque', 'optForce': 100.0},
+                  'lumbar_extension': {'actuatorType': 'torque', 'optForce': 300.0},
+                  'lumbar_bending': {'actuatorType': 'torque', 'optForce': 200.0},
+                  'lumbar_rotation': {'actuatorType': 'torque', 'optForce': 100.0},
                   }
-
-    # Select the gait cycle to run the simulation for
-    # -------------------------------------------------------------------------
-
-    # Read in GRF data to identify stance phase timings
-    trial_grf = osim.TimeSeriesTable(f'{trial_label}_grf.mot')
-    vgrf = trial_grf.getDependentColumn('ground_force_r_vy').to_numpy()
-    grf_time = np.array(trial_grf.getIndependentColumn())
-    # Identify right foot contacts and toe offs based on rising and falling edges above threshold of 50N
-    force_above = vgrf > 50
-    rising_edges = np.where((~force_above[:-1]) & (force_above[1:]))[0] + 1
-    falling_edges = np.where((force_above[:-1]) & (~force_above[1:]))[0] + 1
-
-    # # Stance phase option
-    # # Take the mid-point of the indices and take 5 strides either side
-    # # Get the associated times to run IK over
-    # middle_ind = np.where(rising_edges == rising_edges[len(rising_edges) // 2])[0][0]
-    # start_val = rising_edges[middle_ind - 5]
-    # end_val = rising_edges[middle_ind + 5]
-    # select_from = list(rising_edges[middle_ind - 5:middle_ind+4])
-
-    # Toe-off to toe-off option
-    # Take the mid-point of the indices and take 3 strides either side
-    middle_ind = np.where(falling_edges == falling_edges[len(rising_edges) // 2])[0][0]
-    start_val = falling_edges[middle_ind - 3]
-    end_val = falling_edges[middle_ind + 3]
-    select_from = list(falling_edges[middle_ind - 3:middle_ind + 2])
-
-    # Randomly sample the starting point from the identified foot strikes
-    # Set a seed based on participant ID number for consistency
-    random.seed(int(re.search(r"\d+", participant).group()) * 5 + 12345)
-
-    # # Stance phase option
-    # select_start = random.sample(select_from, 1)[0]
-    # # Find the end of the stance phase based on the force data
-    # below = np.where(vgrf[select_start:] < 20)[0]
-    # select_end = select_start + below[0]
-
-    # Toe-off to toe-off option
-    select_start = random.sample(select_from[:-1], 1)[0]
-    select_end = select_from[select_from.index(select_start)+1]
-
-    # Set the start and end times based on grf data
-    # Add 50 millisecond buffer either side to avoid potentially erroneous data in initial and final states
-    # This gets accounted for by removing when PFJ forces are calculated in a later script
-    # See De Groote et al. (2016)
-    start_time = grf_time[select_start] - 0.05
-    end_time = grf_time[select_end] + 0.05
 
     # =========================================================================
     # Set-up and run the tracking simulation
@@ -306,20 +245,11 @@ def run_dynamic_optimisation(model_type):
     model_proc.append(osim.ModOpAddExternalLoads(f'{trial_label}_grf.xml'))
 
     # Increase muscle isometric force by a scaling factor to deal with potentially higher muscle forces
-    model_proc.append(osim.ModOpScaleMaxIsometricForce(1.5))
+    # 2.0 scale used here instead of 1.5 as muscle scaling wasn't considered with individual models
+    model_proc.append(osim.ModOpScaleMaxIsometricForce(2.0))
 
     # Scale active force curve width
     model_proc.append(osim.ModOpScaleActiveFiberForceCurveWidthDGF(1.5))
-
-    # # Set muscle to implicit dynamics mode
-    # # TODO: does this do anything without tendon compliance?
-    # # TODO: don't think this works without activation tendon compliance
-    # model_proc.append(osim.ModOpUseImplicitTendonComplianceDynamicsDGF())
-
-    # # Append polynomial approximations for muscles
-    # # TODO: probably speeds up but inconsistent with Fukuchi dataset simulations
-    # model_proc.append(osim.ModOpReplacePathsWithFunctionBasedPaths(
-    #     f'{participant}_{model_type}_FunctionBasedPathSet.xml'))
 
     # Process model for further edits
     opt_model = model_proc.process()
@@ -364,70 +294,33 @@ def run_dynamic_optimisation(model_type):
     opt_model.initSystem()
 
     # Print model to file in tracking directory
-    opt_model.printToXML(f'{participant}_{condition}_dynamic-optimisation_complex.osim')
-
-    # Clean up marker data for tracking simulation
-    # I believe this needs to be done to remove nan's from the marker dataset and crashing the optimisation
-    # -------------------------------------------------------------------------
-
-    # Load in the marker file
-    trc_data = osim.TimeSeriesTableVec3(f'{trial_label}_filt.trc')
-
-    # Remove the calibration markers
-    # Add exceptions here as some data doesn't have the calibration markers
-    try:
-        trc_data.removeColumn('RMEP')
-    except:
-        print('RMEP marker not found in dataset. Ignoring...')
-    try:
-        trc_data.removeColumn('LMEP')
-    except:
-        print('LMEP marker not found in dataset. Ignoring...')
-    try:
-        trc_data.removeColumn('RMMAL')
-    except:
-        print('RMMAL marker not found in dataset. Ignoring...')
-    try:
-        trc_data.removeColumn('LMMAL')
-    except:
-        print('LMMAL marker not found in dataset. Ignoring...')
-
-    # Save to file
-    osim.TRCFileAdapter().write(trc_data, f'{trial_label}_clean.trc')
+    opt_model.printToXML(f'{participant}_squat_dynamic-optimisation_complex.osim')
 
     # Clean up kinematic data for tracking guess
+    # Note this does nothing but leaves space to modify the initial guess if desired
     # -------------------------------------------------------------------------
 
-    # Load in kinematic data to table processor
-    ik_proc = osim.TableProcessor(f'{participant}_{condition}_ik_{model_type}_filt.mot')
-
-    # Append operators to filter data, derive speeds, convert to radians and use full state names
-    ik_proc.append(osim.TabOpAppendCoordinateValueDerivativesAsSpeeds())
-
-    # Process table to get data
-    ik_data = ik_proc.process(opt_model)
-
-    # Trim kinematic data to start and end times
-    ik_data.trim(start_time, end_time)
+    # Load in kinematic data
+    ik_data = osim.TimeSeriesTable(f'{participant}_{trial_label}_ik_{model_type}_filt.mot')
 
     # Write to file
-    osim.STOFileAdapter().write(ik_data, f'{participant}_{condition}_ik-initial-guess_{model_type}.sto')
+    osim.STOFileAdapter().write(ik_data, f'{participant}_squat_ik-initial-guess_{model_type}.sto')
 
     # Set up tracking simulation
     # -------------------------------------------------------------------------
 
     # Create tracking tool
     track = osim.MocoTrack()
-    track.setName(f'{participant}_{condition}_dynamic-optimisation_{model_type}')
+    track.setName(f'{participant}_squat_dynamic-optimisation_{model_type}')
 
     # Set model
-    track_model_proc = osim.ModelProcessor(f'{participant}_{condition}_dynamic-optimisation_complex.osim')
+    track_model_proc = osim.ModelProcessor(f'{participant}_squat_dynamic-optimisation_complex.osim')
     track.setModel(track_model_proc)
     track_model = track_model_proc.process()
     track_model.initSystem()
 
     # Set the marker reference file and settings
-    track.setMarkersReferenceFromTRC(f'{trial_label}_clean.trc')
+    track.setMarkersReferenceFromTRC(f'{trial_label}.trc')
     track.set_markers_global_tracking_weight(globalMarkerTrackingWeight)
 
     # Set individual marker weights
@@ -508,8 +401,9 @@ def run_dynamic_optimisation(model_type):
 
     # Muscle bounds
     # problem.setStateInfoPattern('/forceset/.*/normalized_tendon_force', [0, 1.5], [], [])  # TODO: reactivate if using elastic tendons
-    problem.setStateInfoPattern('/forceset/.*/activation', [0.01, 1.0], [], [])  # allow muscles to over-activate rather than increasing force?
-    problem.setControlInfoPattern('/forceset/.*_r', [1e-3, 1.0], [], [])  # TODO: shifted this from 2.0 to 1.0 max limit; allow control signals to over-activate rather than increasing force
+    # Some muscles cap out at 1.0 - so allow over-activation rather than increasing strength and passive forces
+    problem.setStateInfoPattern('/forceset/.*/activation', [0.01, 2.0], [], [])
+    problem.setControlInfoPattern('/forceset/.*_r', [1e-3, 2.0], [], [])
 
     # Set kinematic bounds
     # -------------------------------------------------------------------------
@@ -607,6 +501,7 @@ def run_dynamic_optimisation(model_type):
             guess.setState(col, ik_data.getDependentColumn(col).to_numpy())
             
     # Generate accelerations from coordinate speeds for implicit mode
+    guess.generateSpeedsFromValues()
     guess.generateAccelerationsFromSpeeds()
 
     # # Set generic zero guess for forceset values
@@ -621,7 +516,7 @@ def run_dynamic_optimisation(model_type):
     # # Set relevant elements in guess using consistent pre-solved simulation
     # Read in consistent initial guess for speed
     consistent_guess = osim.MocoTrajectory(os.path.join('..', '..', '..', '..', '..',
-                                                        'guess', dataset, f'{condition}_consistent-guess.sto'))
+                                                        'guess', dataset, 'squat_consistent-guess.sto'))
     # Resample current guess to the consistent guess (should match mesh interval)
     guess.resampleWithNumTimes(consistent_guess.getNumTimes())
     # Look for relevant states in consistent guess to fill
@@ -637,10 +532,10 @@ def run_dynamic_optimisation(model_type):
             guess.setControl(control_name, np.zeros(guess.getNumTimes()))
 
     # Write to file for reference
-    guess.write(f'{participant}_{condition}_initial-guess_{model_type}.sto')
+    guess.write(f'{participant}_squat_initial-guess_{model_type}.sto')
 
     # Set guess in solver
-    solver.setGuessFile(f'{participant}_{condition}_initial-guess_{model_type}.sto')
+    solver.setGuessFile(f'{participant}_squat_initial-guess_{model_type}.sto')
 
     # Reset problem to check any issues
     solver.resetProblem(problem)
@@ -666,16 +561,16 @@ def run_dynamic_optimisation(model_type):
     # Write solution to file
     if tracking_solution.isSealed():
         tracking_solution.unseal()
-    tracking_solution.write(f'{participant}_{condition}_dynamic-optimisation_{model_type}_solution.sto')
+    tracking_solution.write(f'{participant}_squat_dynamic-optimisation_{model_type}_solution.sto')
 
     # Save a dictionary storing computational time
     computation = {'time_s': computation_run_time,
-                   'note': f'Dynamic optimisation computation time for {participant} {condition}'}
-    with open(f'{participant}_{condition}_dynamic-optimisation_computation-time.pkl', 'wb') as pkl_file:
+                   'note': f'Dynamic optimisation computation time for {participant} squat'}
+    with open(f'{participant}_squat_dynamic-optimisation_computation-time.pkl', 'wb') as pkl_file:
         pickle.dump(computation, pkl_file)
 
     # Remove initial tracked states and markers file
-    os.remove(f'{participant}_{condition}_dynamic-optimisation_{model_type}_tracked_markers.sto')
+    os.remove(f'{participant}_squat_dynamic-optimisation_{model_type}_tracked_markers.sto')
     # os.remove(f'{participant}_{condition}_dynamic-optimisation_{model_type}_tracked_states.sto')
 
     # Extract muscle forces from solution
@@ -688,7 +583,7 @@ def run_dynamic_optimisation(model_type):
                                       output_paths)
     # Write to file
     osim.STOFileAdapter().write(muscle_force_table,
-                                f'{participant}_{condition}_dynamic-optimisation_{model_type}_muscle-forces.sto')
+                                f'{participant}_squat_dynamic-optimisation_{model_type}_muscle-forces.sto')
 
     # Extract PF joint reaction forces if using complex model
     if model_type == 'complex':
@@ -701,13 +596,13 @@ def run_dynamic_optimisation(model_type):
                                            output_paths).flatten()
         # Write to file
         osim.STOFileAdapter().write(jrf_table,
-                                    f'{participant}_{condition}_dynamic-optimisation_{model_type}_pfjrf.sto')
+                                    f'{participant}_squat_dynamic-optimisation_{model_type}_pfjrf.sto')
 
     # Return to home directory
     os.chdir(home_dir)
 
     # Print out to console as a bookmark in any log file
-    print(f'{"*"*10} FINISHED DYNAMIC OPTIMISATION FOR {participant} {condition} {"*"*10}')
+    print(f'{"*"*10} FINISHED DYNAMIC OPTIMISATION FOR {participant} SQUAT {"*"*10}')
 
 
 # Run a static optimisation
@@ -735,15 +630,15 @@ def run_static_optimisation(model_type):
     # -------------------------------------------------------------------------
 
     # Create the folder for simulation
-    os.makedirs(os.path.join('..','..','simulations',dataset,participant,condition,'static_optimisation'), exist_ok=True)
+    os.makedirs(os.path.join('..','..','simulations',dataset,participant,'squat','static_optimisation'), exist_ok=True)
 
     # Navigate to simulation folder for ease of use
     home_dir = os.getcwd()
-    os.chdir(os.path.join('..','..','simulations',dataset,participant,condition,'static_optimisation'))
+    os.chdir(os.path.join('..','..','simulations',dataset,participant,'squat','static_optimisation'))
 
     # Identify trial label
     # Use the created mot file to do this
-    mot_file = glob(os.path.join('..', '..', '..', '..', '..', 'data', dataset, participant, f'{condition}*_grf.mot'))[0]
+    mot_file = glob(os.path.join('..', '..', '..', '..', '..', 'data', dataset, participant, 'squat*_grf.mot'))[0]
     trial_label = os.path.split(mot_file)[-1].split('_grf.mot')[0]
 
     # Copy external loads file to simulation directory
@@ -756,17 +651,17 @@ def run_static_optimisation(model_type):
 
     # Copy states from the dynamic optimisation
     dynamic_opt_traj = osim.MocoTrajectory(os.path.join(
-        '..', 'dynamic_optimisation', f'{participant}_{condition}_dynamic-optimisation_{model_type}_solution.sto'))
+        '..', 'dynamic_optimisation', f'{participant}_squat_dynamic-optimisation_{model_type}_solution.sto'))
     states_table_proc = osim.TableProcessor(dynamic_opt_traj.exportToStatesTable())
     states_table_proc.append(osim.TabOpLowPassFilter(kinematic_filt_freq))
     states_table = states_table_proc.process()
     states_table.trim(dynamic_opt_traj.getInitialTime(), dynamic_opt_traj.getFinalTime())
-    osim.STOFileAdapter().write(states_table, f'{participant}_{condition}_states.sto')
+    osim.STOFileAdapter().write(states_table, f'{participant}_squat_states.sto')
 
     # Check for simple model and need to invert knee angle in states
     if model_type == 'simple':
         # Read in data
-        states_data = osim.TimeSeriesTable(f'{participant}_{condition}_states.sto')
+        states_data = osim.TimeSeriesTable(f'{participant}_squat_states.sto')
         # Create new columns for values and speeds. Remove the existing columns
         adjust_cols = ['/jointset/walker_knee_l/knee_angle_l/value',
                        '/jointset/walker_knee_l/knee_angle_l/speed',
@@ -784,7 +679,7 @@ def run_static_optimisation(model_type):
             if 'patellofemoral_' in col:
                 states_data.removeColumn(col)
         # Save new states data to file
-        osim.STOFileAdapter().write(states_data, f'{participant}_{condition}_states.sto')
+        osim.STOFileAdapter().write(states_data, f'{participant}_squat_states.sto')
 
     # Set actuator forces to support simulation
     act_forces = {'pelvis_tx': {'actuatorType': 'residual', 'optForce': 5},
@@ -805,6 +700,9 @@ def run_static_optimisation(model_type):
                   'knee_angle_l': {'actuatorType': 'torque', 'optForce': 300.0},
                   'ankle_angle_l': {'actuatorType': 'torque', 'optForce': 200.0},
                   'subtalar_angle_l': {'actuatorType': 'torque', 'optForce': 100.0},
+                  'lumbar_extension': {'actuatorType': 'torque', 'optForce': 300.0},
+                  'lumbar_bending': {'actuatorType': 'torque', 'optForce': 200.0},
+                  'lumbar_rotation': {'actuatorType': 'torque', 'optForce': 100.0},
                   }
 
     # Prepare model for static optimisation
@@ -816,7 +714,8 @@ def run_static_optimisation(model_type):
                      f'{participant}_{model_type}.osim'))
 
     # Increase muscle isometric force by a scaling factor to deal with potentially higher muscle forces
-    model_proc.append(osim.ModOpScaleMaxIsometricForce(1.5))
+    # 2.0 scale used here instead of 1.5 as muscle scaling wasn't considered with individual models
+    model_proc.append(osim.ModOpScaleMaxIsometricForce(2.0))
 
     # Scale active force curve width
     model_proc.append(osim.ModOpScaleActiveFiberForceCurveWidthDGF(1.5))
@@ -825,20 +724,25 @@ def run_static_optimisation(model_type):
     opt_model = model_proc.process()
 
     # Add coordinate actuators to model
+    # Get model coordinates to check against actuators being added
+    model_coordinates = [
+        opt_model.getCoordinateSet().get(ii).getName() for ii in range(opt_model.getCoordinateSet().getSize())]
     for coordinate in act_forces:
-        # Create actuator
-        actu = osim.CoordinateActuator()
-        # Set name
-        actu.setName(f'{coordinate}_{act_forces[coordinate]["actuatorType"]}')
-        # Set coordinate
-        actu.setCoordinate(opt_model.updCoordinateSet().get(coordinate))
-        # Set optimal force
-        actu.setOptimalForce(act_forces[coordinate]['optForce'])
-        # Set min and max control
-        actu.setMinControl(np.inf * -1)
-        actu.setMaxControl(np.inf * 1)
-        # Append to model force set
-        opt_model.updForceSet().cloneAndAppend(actu)
+        # Check if in model
+        if coordinate in model_coordinates:
+            # Create actuator
+            actu = osim.CoordinateActuator()
+            # Set name
+            actu.setName(f'{coordinate}_{act_forces[coordinate]["actuatorType"]}')
+            # Set coordinate
+            actu.setCoordinate(opt_model.updCoordinateSet().get(coordinate))
+            # Set optimal force
+            actu.setOptimalForce(act_forces[coordinate]['optForce'])
+            # Set min and max control
+            actu.setMinControl(np.inf * -1)
+            actu.setMaxControl(np.inf * 1)
+            # Append to model force set
+            opt_model.updForceSet().cloneAndAppend(actu)
 
     # Adjust limits on muscle activations to produce necessary force if needed
     for muscle_ind in range(opt_model.getMuscles().getSize()):
@@ -849,7 +753,7 @@ def run_static_optimisation(model_type):
     opt_model.finalizeConnections()
 
     # Print model to file in tracking directory
-    opt_model.printToXML(f'{participant}_{condition}_static_optimisation_{model_type}.osim')
+    opt_model.printToXML(f'{participant}_squat_static_optimisation_{model_type}.osim')
 
     # Set-up static optimisation
     # -------------------------------------------------------------------------
@@ -860,23 +764,23 @@ def run_static_optimisation(model_type):
                                   f'static_optimisation_{model_type}.xml')), False)
 
     # Set tool name
-    analyzeTool.setName(f'{participant}_{condition}')
+    analyzeTool.setName(f'{participant}_squat')
 
     # Set the model file
-    analyzeTool.setModelFilename(f'{participant}_{condition}_static_optimisation_{model_type}.osim')
+    analyzeTool.setModelFilename(f'{participant}_squat_static_optimisation_{model_type}.osim')
 
     # Set times for analysis
-    analyzeTool.setStartTime(osim.TimeSeriesTable(f'{participant}_{condition}_states.sto').getIndependentColumn()[0])
-    analyzeTool.setFinalTime(osim.TimeSeriesTable(f'{participant}_{condition}_states.sto').getIndependentColumn()[-1])
+    analyzeTool.setStartTime(osim.TimeSeriesTable(f'{participant}_squat_states.sto').getIndependentColumn()[0])
+    analyzeTool.setFinalTime(osim.TimeSeriesTable(f'{participant}_squat_states.sto').getIndependentColumn()[-1])
 
     # Set states file
-    analyzeTool.setStatesFileName(f'{participant}_{condition}_states.sto')
+    analyzeTool.setStatesFileName(f'{participant}_squat_states.sto')
 
     # Set external loads
     analyzeTool.setExternalLoadsFileName(f'{trial_label}_grf.xml')
 
     # Save tool
-    analyzeTool.printToXML(f'{participant}_{condition}_setup-static-optimisation_{model_type}.xml')
+    analyzeTool.printToXML(f'{participant}_squat_setup-static-optimisation_{model_type}.xml')
 
     # Run static optimisation
     # -------------------------------------------------------------------------
@@ -885,7 +789,7 @@ def run_static_optimisation(model_type):
     computation_start = time.time()
 
     # Read the tool back in as this sometimes helps avoid Python crashing
-    runAnalysis = osim.AnalyzeTool(f'{participant}_{condition}_setup-static-optimisation_{model_type}.xml')
+    runAnalysis = osim.AnalyzeTool(f'{participant}_squat_setup-static-optimisation_{model_type}.xml')
 
     # Run the tool
     runAnalysis.run()
@@ -895,15 +799,15 @@ def run_static_optimisation(model_type):
 
     # Save a dictionary storing computational time
     computation = {'time_s': computation_run_time,
-                   'note': f'Static optimisation {model_type} model computation time for {participant} {condition}'}
-    with open(f'{participant}_{condition}_static-optimisation_{model_type}_computation-time.pkl', 'wb') as pkl_file:
+                   'note': f'Static optimisation {model_type} model computation time for {participant} squat'}
+    with open(f'{participant}_squat_static-optimisation_{model_type}_computation-time.pkl', 'wb') as pkl_file:
         pickle.dump(computation, pkl_file)
 
     # Return to home directory
     os.chdir(home_dir)
 
     # Print out to console as a bookmark in any log file
-    print(f'{"*" * 10} FINISHED STATIC OPTIMISATION FOR {participant} {condition} WITH {model_type.upper()} MODEL {"*" * 10}')
+    print(f'{"*" * 10} FINISHED STATIC OPTIMISATION FOR {participant} SQUAT WITH {model_type.upper()} MODEL {"*" * 10}')
 
 
 # Run inverse dynamics
@@ -930,15 +834,15 @@ def run_inverse_dynamics(model_type):
     # -------------------------------------------------------------------------
 
     # Create the folder for simulation
-    os.makedirs(os.path.join('..','..','simulations',dataset,participant,condition,'inverse_dynamics'), exist_ok=True)
+    os.makedirs(os.path.join('..','..','simulations',dataset,participant,'squat','inverse_dynamics'), exist_ok=True)
 
     # Navigate to simulation folder for ease of use
     home_dir = os.getcwd()
-    os.chdir(os.path.join('..','..','simulations',dataset,participant,condition,'inverse_dynamics'))
+    os.chdir(os.path.join('..','..','simulations',dataset,participant,'squat','inverse_dynamics'))
 
     # Identify trial label
     # Use the created mot file to do this
-    mot_file = glob(os.path.join('..', '..', '..', '..', '..', 'data', dataset, participant, f'{condition}*_grf.mot'))[0]
+    mot_file = glob(os.path.join('..', '..', '..', '..', '..', 'data', dataset, participant, 'squat*_grf.mot'))[0]
     trial_label = os.path.split(mot_file)[-1].split('_grf.mot')[0]
 
     # Copy external loads file to simulation directory
@@ -951,7 +855,7 @@ def run_inverse_dynamics(model_type):
 
     # Copy states from the dynamic optimisation
     dynamic_opt_traj = osim.MocoTrajectory(os.path.join(
-        '..', 'dynamic_optimisation', f'{participant}_{condition}_dynamic-optimisation_complex_solution.sto'))
+        '..', 'dynamic_optimisation', f'{participant}_squat_dynamic-optimisation_complex_solution.sto'))
     coord_table_proc = osim.TableProcessor(dynamic_opt_traj.exportToValuesTable())
     coord_table_proc.append(osim.TabOpLowPassFilter(kinematic_filt_freq))
     coord_table = coord_table_proc.process()
@@ -964,7 +868,7 @@ def run_inverse_dynamics(model_type):
     coord_table.setColumnLabels(new_cols)
 
     # Write coordinates to file
-    osim.STOFileAdapter().write(coord_table, f'{participant}_{condition}_coordinates.sto')
+    osim.STOFileAdapter().write(coord_table, f'{participant}_squat_coordinates.sto')
 
     # # Check for simple model and need to invert knee angle in states
     # if model_type == 'simple':
@@ -988,7 +892,7 @@ def run_inverse_dynamics(model_type):
     opt_model.finalizeConnections()
 
     # Print model to file in tracking directory
-    opt_model.printToXML(f'{participant}_{condition}_inverse_dynamics_{model_type}.osim')
+    opt_model.printToXML(f'{participant}_squat_inverse_dynamics_{model_type}.osim')
 
     # Set-up inverse dynamics
     # -------------------------------------------------------------------------
@@ -997,23 +901,23 @@ def run_inverse_dynamics(model_type):
     idTool = osim.InverseDynamicsTool()
 
     # Set tool name
-    idTool.setName(f'{participant}_{condition}')
+    idTool.setName(f'{participant}_squat')
 
     # Set the model file
-    idTool.setModelFileName(f'{participant}_{condition}_inverse_dynamics_{model_type}.osim')
+    idTool.setModelFileName(f'{participant}_squat_inverse_dynamics_{model_type}.osim')
 
     # Set times for analysis
-    idTool.setStartTime(osim.TimeSeriesTable(f'{participant}_{condition}_coordinates.sto').getIndependentColumn()[0])
-    idTool.setEndTime(osim.TimeSeriesTable(f'{participant}_{condition}_coordinates.sto').getIndependentColumn()[-1])
+    idTool.setStartTime(osim.TimeSeriesTable(f'{participant}_squat_coordinates.sto').getIndependentColumn()[0])
+    idTool.setEndTime(osim.TimeSeriesTable(f'{participant}_squat_coordinates.sto').getIndependentColumn()[-1])
 
     # Set states file
-    idTool.setCoordinatesFileName(f'{participant}_{condition}_coordinates.sto')
+    idTool.setCoordinatesFileName(f'{participant}_squat_coordinates.sto')
 
     # Set external loads
     idTool.setExternalLoadsFileName(f'{trial_label}_grf.xml')
 
     # Set output filename
-    idTool.setOutputGenForceFileName(f'{participant}_{condition}_inverse_dynamics_results.sto')
+    idTool.setOutputGenForceFileName(f'{participant}_squat_inverse_dynamics_results.sto')
 
     # Set forces to exclude (muscles just in case, even though there are none)
     exclude_forces = osim.ArrayStr()
@@ -1021,7 +925,7 @@ def run_inverse_dynamics(model_type):
     idTool.setExcludedForces(exclude_forces)
 
     # Save tool
-    idTool.printToXML(f'{participant}_{condition}_setup-inverse-dynamics_{model_type}.xml')
+    idTool.printToXML(f'{participant}_squat_setup-inverse-dynamics_{model_type}.xml')
 
     # Run inverse dynamics
     # -------------------------------------------------------------------------
@@ -1030,7 +934,7 @@ def run_inverse_dynamics(model_type):
     computation_start = time.time()
 
     # Read the tool back in as this sometimes helps avoid Python crashing
-    runID = osim.InverseDynamicsTool(f'{participant}_{condition}_setup-inverse-dynamics_{model_type}.xml')
+    runID = osim.InverseDynamicsTool(f'{participant}_squat_setup-inverse-dynamics_{model_type}.xml')
 
     # Run the tool
     runID.run()
@@ -1040,30 +944,28 @@ def run_inverse_dynamics(model_type):
 
     # Save a dictionary storing computational time
     computation = {'time_s': computation_run_time,
-                   'note': f'Inverse dynamics {model_type} model computation time for {participant} {condition}'}
-    with open(f'{participant}_{condition}_inverse-dynamics_{model_type}_computation-time.pkl', 'wb') as pkl_file:
+                   'note': f'Inverse dynamics {model_type} model computation time for {participant} squat'}
+    with open(f'{participant}_squat_inverse-dynamics_{model_type}_computation-time.pkl', 'wb') as pkl_file:
         pickle.dump(computation, pkl_file)
 
-    # Smooth inverse dyanmics forces for later analyses
-    id_table_proc = osim.TableProcessor(f'{participant}_{condition}_inverse_dynamics_results.sto')
+    # Smooth inverse dynamics forces for later analyses
+    id_table_proc = osim.TableProcessor(f'{participant}_squat_inverse_dynamics_results.sto')
     id_table_proc.append(osim.TabOpLowPassFilter(kinematic_filt_freq))
     id_table = id_table_proc.process()
     id_table.trim(runID.getStartTime(), runID.getEndTime())
-    osim.STOFileAdapter().write(id_table, f'{participant}_{condition}_inverse_dynamics_results.sto')
+    osim.STOFileAdapter().write(id_table, f'{participant}_squat_inverse_dynamics_results.sto')
 
     # Return to home directory
     os.chdir(home_dir)
 
     # Print out to console as a bookmark in any log file
-    print(f'{"*" * 10} FINISHED INVERSE DYNAMICS FOR {participant} {condition} WITH {model_type.upper()} MODEL {"*" * 10}')
+    print(f'{"*" * 10} FINISHED INVERSE DYNAMICS FOR {participant} SQUAT WITH {model_type.upper()} MODEL {"*" * 10}')
 
 # =========================================================================
 # Run main code
 # =========================================================================
 
 if __name__ == '__main__':
-
-    # TODO: simple model? Not working great in dynamic optimisation
 
     # Run dynamic optimisation
     # -------------------------------------------------------------------------

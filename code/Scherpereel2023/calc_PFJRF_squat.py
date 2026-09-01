@@ -9,12 +9,7 @@
     aaron.f@deakin.edu.au
 
     This script calculates and collates the different PFJRF approaches from
-    each participant's simulated trials from the Loone2025 dataset.
-
-    TODO:
-        > Applies equation method with optimisation data instead of analyze tools forces
-            >> Is this what we want?
-
+    each participant's simulated squat trials from the Scherpereel2023 dataset.
 
 """
 
@@ -45,10 +40,7 @@ from scipy.constants import g
 # -------------------------------------------------------------------------
 
 # Set dataset name
-dataset = 'Loone2025'
-
-# Read in participant info
-participantInfo = pd.read_csv(os.path.join('..','..','data',dataset,'selected_participant_info.csv'))
+dataset = 'Scherpereel2023'
 
 # Get participant list from folder
 # Note this uses simulation folder as this is where data is being extracted from
@@ -59,11 +51,27 @@ participant_list = [ii for ii in os.listdir(
 # Set the list of conditions to process
 # Currently only one anyway, but if more were to be added it could be done
 condition_list = [
-    'SRRun',   # standard shoe running
+    'squat',   # squatting task
     ]
 
 # Create directory for storing results
 os.makedirs(os.path.join('..', '..', 'outputs', dataset), exist_ok=True)
+
+# Set participant masses from dataset readme
+participant_mass = {
+    # 'AB01': 78.9,  # marker-set issues
+    # 'AB02': 82.2,  # no static trial
+    'AB03': 113.5,
+    'AB05': 71.5,
+    'AB06': 79.1,
+    # 'AB07': 62.3,  # marker-set issues
+    'AB08': 87.6,
+    'AB09': 84.1,
+    'AB10': 67.5,
+    'AB11': 65.1,
+    'AB12': 64.0,
+    'AB13': 67.6
+}
 
 # Plot settings
 # -------------------------------------------------------------------------
@@ -153,7 +161,7 @@ ca_mm2_coeffs_kernozek = [-0.0001, -0.0082, 3.5071, 73.81]
 # Define functions
 # =========================================================================
 
-# Calculate the PFJRF and PFJS for a participant at a given speed
+# Calculate the PFJRF and PFJS for a participant during the specified task(s)
 # -------------------------------------------------------------------------
 def calculate_pfj_loads(participant):
 
@@ -173,7 +181,7 @@ def calculate_pfj_loads(participant):
     computation_time = {method: {condition: np.zeros(1) for condition in condition_list} for method in plot_col.keys()}
 
     # Get participant mass
-    mass_kg = participantInfo[participantInfo['participant_id'] == participant]['mass'].values[0]
+    mass_kg = participant_mass[participant]
 
     # Loop through speeds for calculations
     for condition in condition_list:
@@ -191,10 +199,6 @@ def calculate_pfj_loads(participant):
         # Read in joint moment and coordinate data
         coordinates = osim.TimeSeriesTable(os.path.join(data_folder, f'{participant}_{condition}_coordinates.sto'))
         moments = osim.TimeSeriesTable(os.path.join(data_folder, f'{participant}_{condition}_inverse_dynamics_results.sto'))
-
-        # Trim the buffer 50 milliseconds of each side of the data
-        coordinates.trim(coordinates.getIndependentColumn()[0] + 0.05,coordinates.getIndependentColumn()[-1] - 0.05)
-        moments.trim(moments.getIndependentColumn()[0] + 0.05, moments.getIndependentColumn()[-1] - 0.05)
 
         # Extract necessary angles and moments
         # Set variables to extract
@@ -250,7 +254,6 @@ def calculate_pfj_loads(participant):
         # if gender == 'M':
         #     h_lever = (-0.29 * angle_norm['hip_flexion_r']*-1 ** 2) - (4.3024 * angle_norm['hip_flexion_r']*-1) + 63.882
         #     g_lever = (-0.0668e-03 * angle_norm['hip_flexion_r']*-1 ** 2) - (1.5768e-03 * angle_norm['hip_flexion_r']*-1) + 82.968e-03
-
 
         # Calculate quadriceps force
         # Remove negative force at knee extension moment portions
@@ -308,10 +311,6 @@ def calculate_pfj_loads(participant):
             data_folder, f'{participant}_{condition}_StaticOptimization_Complex_force.sto'))
         # moment_arms = osim.TimeSeriesTable(os.path.join(
         #     data_folder, f'{participant}run{speed}_MuscleAnalysis_Complex_MomentArm_knee_angle_r.sto'))
-
-        # Trim the buffer 50 milliseconds of each side of the data
-        states.trim(states.getIndependentColumn()[0] + 0.05, states.getIndependentColumn()[-1] - 0.05)
-        muscle_forces.trim(muscle_forces.getIndependentColumn()[0] + 0.05, muscle_forces.getIndependentColumn()[-1] - 0.05)
 
         # Extract muscle forces from static optimisation for quadriceps alongside timestamps
         # Timestamps are consistent across all static optimisation files
@@ -399,10 +398,6 @@ def calculate_pfj_loads(participant):
             data_folder, f'{participant}_{condition}_dynamic-optimisation_complex_muscle-forces.sto'))
         # moment_arms = osim.TimeSeriesTable(os.path.join(
         #     data_folder, f'{participant}run{speed}_MuscleAnalysis_Complex_MomentArm_knee_angle_r.sto'))
-
-        # Trim the buffer 50 milliseconds of each side of the data
-        states.trim(states.getIndependentColumn()[0] + 0.05, states.getIndependentColumn()[-1] - 0.05)
-        muscle_forces.trim(muscle_forces.getIndependentColumn()[0] + 0.05, muscle_forces.getIndependentColumn()[-1] - 0.05)
 
         # Extract muscle forces from static optimisation for quadriceps alongside timestamps
         # Timestamps are consistent across all dynamic optimisation files
@@ -498,7 +493,7 @@ def calculate_pfj_loads(participant):
 
         # Plot on the singular axis
         # Add title
-        plot_ax.set_title(f'Standard Run', fontsize=14, fontweight='bold')
+        plot_ax.set_title(f'{condition.title()}', fontsize=14, fontweight='bold')
         # Loop through methods
         for method in plot_col.keys():
             # Normalise quads force and pfjrf to body weight
@@ -518,7 +513,7 @@ def calculate_pfj_loads(participant):
 
         # Set x-axis labels
         # All axes
-        plot_ax.set_xlabel('0-100% Gait Cycle', fontsize=10, fontweight='bold', labelpad=10)
+        plot_ax.set_xlabel('0-100% Squat', fontsize=10, fontweight='bold', labelpad=10)
 
         # Set y-axis parameters
         plot_ax.yaxis.set_major_formatter(FormatStrFormatter('%.0f'))
@@ -587,4 +582,4 @@ if __name__ == '__main__':
     # Doing this seems to avoid an error code when completing the script run
     os._exit(00)
 
-# %% ---------- end of calc_PFJRF.py ---------- %% #
+# %% ---------- end of calc_PFJRF_squat.py ---------- %% #
